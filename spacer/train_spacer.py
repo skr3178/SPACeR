@@ -36,17 +36,23 @@ DEV = "cuda"
 SHIFT = 5                                  # 0.5 s token, 2 Hz (checkpoint-native)
 
 
-def build_env(n_scenes):
+def build_env(n_scenes, n_worlds=1):
     cfg = load_config("/gpd/examples/experimental/config/reliable_agents_params")
-    # single world (rollout/adapter are world-0); cycle `n_scenes` distinct
-    # scenes across env.reset() for variety.
+    # `n_worlds` parallel Madrona worlds; `n_scenes` ≥ `n_worlds` distinct scenes
+    # cycled across env.reset() (paper runs 64+ worlds; here we let the caller
+    # pick, default 1 for back-compat with the M5a–c single-world path).
     loader = SceneDataLoader(root="/gpd/data/processed/validation",
-                             batch_size=1, dataset_size=max(1, n_scenes),
+                             batch_size=n_worlds,
+                             dataset_size=max(n_worlds, n_scenes),
                              sample_with_replacement=False)
     # Variant 4 (KL + r_inf) — Table A2 best composite (0.74), goals dropped.
     # r_task = − w_coll·𝟙[collision] − w_off·𝟙[off-road]   (no goal channel)
+    # collision_behavior="stop": LEVEL-triggered penalty (sustained while in
+    # collided/off-road state). "ignore" makes the same flags EDGE-triggered
+    # (fire once on entry, clear next step) — verified by
+    # test_rtask_diagnostic.py; "stop" gives a much stronger RL gradient.
     ec = dataclasses.replace(
-        EnvConfig(), dynamics_model="state", collision_behavior="ignore",
+        EnvConfig(), dynamics_model="state", collision_behavior="stop",
         remove_non_vehicles=cfg.remove_non_vehicles, obs_radius=cfg.obs_radius,
         reward_type="weighted_combination",
         goal_achieved_weight=0.0,
@@ -70,111 +76,176 @@ def load_ref():
 
 
 @torch.no_grad()
-def set_state(env, pos_xy, head):
-    """Drive `state` dynamics: command global pose for all agents (world 0)."""
+def set_state(env, pos_per_w, head_per_w):
+    """Drive `state` dynamics: command global pose for all worlds at once.
+
+    pos_per_w  : list[Tensor[A_w, 2]] of length W
+    head_per_w : list[Tensor[A_w]] of length W
+    A single env.step_dynamics(act) advances all W worlds simultaneously.
+    """
     W, A = env.cont_agent_mask.shape
     g = GlobalEgoState.from_tensor(env.sim.absolute_self_observation_tensor(),
                                    backend="torch", device=DEV)
     act = torch.zeros((W, A, 10), dtype=torch.float32, device=DEV)
-    act[0, :, 0] = pos_xy[:, 0]
-    act[0, :, 1] = pos_xy[:, 1]
-    act[0, :, 2] = g.pos_z[0]
-    act[0, :, 3] = head
+    for w in range(W):
+        Aw = pos_per_w[w].shape[0]
+        act[w, :Aw, 0] = pos_per_w[w][:, 0].to(DEV)
+        act[w, :Aw, 1] = pos_per_w[w][:, 1].to(DEV)
+        act[w, :Aw, 2] = g.pos_z[w, :Aw]
+        act[w, :Aw, 3] = head_per_w[w].to(DEV)
     env.step_dynamics(act)
 
 
-def rollout(env, policy, world_idx=0):
-    """Full-episode π_θ rollout in token space; M1 decodes → `state` drive.
-    Returns per-decision (obs, token, logprob, value, logits) + the rolled
-    trajectory buffers for π_ref scoring."""
+def rollout(env, policy):
+    """Full-episode π_θ rollout in token space across all W worlds in parallel.
+
+    Policy forward stays flat over [nc_total, obs_dim] (Madrona ego/partner/
+    road obs are agent-decentralized; the policy is agent-count-agnostic).
+    Per-world side (scene extract, decode, rolled buffers, set_state) is split
+    into a list of W items because each world has its own scene + agent count.
+
+    Returns per-decision (obs, token, logprob, value, logits) flat across
+    worlds, plus the rolled trajectories / theta_ids / nc_per_w needed to score
+    π_ref per world."""
     obs = env.reset()
-    cmask = env.cont_agent_mask
+    cmask = env.cont_agent_mask                              # [W, A_max]
+    W, A_max = cmask.shape
     ego0 = GlobalEgoState.from_tensor(env.sim.absolute_self_observation_tensor(),
                                       backend="torch", device=DEV)
-    theta_ids = ego0.id[0][cmask[0]].long()                  # π_θ logits row order
-    s0 = extract_gpudrive_scene(env, world_idx)
-    A = s0["pos_xy"].shape[0]
-    buf_pos = np.zeros((A, NUM_STEPS, 2), np.float32)
-    buf_head = np.zeros((A, NUM_STEPS), np.float32)
-    # token vocab template for decode (vehicles-first)
-    tp_traj = policy._ttraj                                  # [A, 2048, 4, 2]
-    prev_pos = torch.tensor(s0["pos_xy"][:, 0], dtype=torch.float32)
-    prev_head = torch.tensor(s0["yaw"][:, 0], dtype=torch.float32)
+    # per-world π_θ logits row order (controlled agents only, in cmask order)
+    theta_ids_per_w = [ego0.id[w][cmask[w]].long() for w in range(W)]
+    nc_per_w = [int(cmask[w].sum().item()) for w in range(W)]
+    # per-world initial scenes (the adapter is already per-world via world_idx)
+    scenes0 = [extract_gpudrive_scene(env, w) for w in range(W)]
+    A_per_w = [s["pos_xy"].shape[0] for s in scenes0]
+    buf_pos = [np.zeros((A_per_w[w], NUM_STEPS, 2), np.float32) for w in range(W)]
+    buf_head = [np.zeros((A_per_w[w], NUM_STEPS), np.float32) for w in range(W)]
+    # vehicles-first token templates (all type 0); A_max matches each world's
+    # padded agent count, so one [A_max, 2048, 4, 2] template slices for any W
+    tp_traj = policy._ttraj
+    prev_pos = [torch.tensor(scenes0[w]["pos_xy"][:, 0], dtype=torch.float32)
+                for w in range(W)]
+    prev_head = [torch.tensor(scenes0[w]["yaw"][:, 0], dtype=torch.float32)
+                 for w in range(W)]
     steps = list(range(SHIFT, NUM_STEPS, SHIFT))             # 18 token-steps
     rec = {"obs": [], "tok": [], "lp": [], "val": [], "logits": [], "rtask": []}
     t = 0
     for k, i in enumerate(steps):
         g = GlobalEgoState.from_tensor(env.sim.absolute_self_observation_tensor(),
                                        backend="torch", device=DEV)
-        # record current global state for all steps up to i
+        # record current global state per world for all steps up to i
         while t <= i and t < NUM_STEPS:
-            buf_pos[:, t, 0] = g.pos_x[0].cpu().numpy()
-            buf_pos[:, t, 1] = g.pos_y[0].cpu().numpy()
-            buf_head[:, t] = g.rotation_angle[0].cpu().numpy()
+            for w in range(W):
+                Aw = A_per_w[w]
+                buf_pos[w][:, t, 0] = g.pos_x[w, :Aw].cpu().numpy()
+                buf_pos[w][:, t, 1] = g.pos_y[w, :Aw].cpu().numpy()
+                buf_head[w][:, t] = g.rotation_angle[w, :Aw].cpu().numpy()
             t += 1
-        x = obs[cmask]                                        # [nc, obs_dim]
-        logits = policy.logits(x)                             # [nc, 2048]
+        x = obs[cmask]                                        # [nc_total, obs_dim]
+        logits = policy.logits(x)                             # [nc_total, 2048]
         tok, lp, _, val = policy(x, deterministic=False)
         rec["obs"].append(x.detach()); rec["tok"].append(tok.detach())
         rec["lp"].append(lp.detach()); rec["val"].append(val.detach())
         rec["logits"].append(logits.detach())
-        # decode chosen token (all agents) -> next 0.5 s pose, drive 5 sim steps
-        tok_all = torch.zeros(A, 1, dtype=torch.long)
-        tok_all[cmask[0].cpu()] = tok.detach().cpu().view(-1, 1)
-        dpos, dhead = decode_token_sequence(
-            tok_all, prev_pos, prev_head, tp_traj,
-            torch.ones(A, 1, dtype=torch.bool))
-        dpos, dhead = dpos[:, 0], dhead[:, 0]
+        # split chosen tokens per world, decode each to next 0.5 s pose
+        tok_split = list(torch.split(tok.detach().cpu(), nc_per_w))
+        dpos_per_w, dhead_per_w = [], []
+        for w in range(W):
+            Aw = A_per_w[w]
+            tok_w = torch.zeros(Aw, 1, dtype=torch.long)
+            tok_w[cmask[w].cpu()[:Aw]] = tok_split[w].view(-1, 1)
+            dp, dh = decode_token_sequence(
+                tok_w, prev_pos[w], prev_head[w], tp_traj[:Aw],
+                torch.ones(Aw, 1, dtype=torch.bool))
+            dpos_per_w.append(dp[:, 0]); dhead_per_w.append(dh[:, 0])
         for _ in range(SHIFT):
-            set_state(env, dpos.to(DEV), dhead.to(DEV))
-        prev_pos, prev_head = dpos, dhead
+            set_state(env, dpos_per_w, dhead_per_w)
+        prev_pos, prev_head = dpos_per_w, dhead_per_w
         rec["rtask"].append(env.get_rewards()[cmask].detach())
         obs = env.get_obs()
-    # rolled trajectory for π_ref
-    s_live = dict(s0); s_live["pos_xy"] = buf_pos; s_live["yaw"] = buf_head
-    s_live["vel_xy"] = finite_diff_velocity(buf_pos, s0["valid"])
-    return rec, s_live, theta_ids
+    # rolled trajectories for π_ref (one s_live dict per world)
+    s_live_per_w = []
+    for w in range(W):
+        sl = dict(scenes0[w])
+        sl["pos_xy"] = buf_pos[w]; sl["yaw"] = buf_head[w]
+        sl["vel_xy"] = finite_diff_velocity(buf_pos[w], scenes0[w]["valid"])
+        s_live_per_w.append(sl)
+    return rec, s_live_per_w, theta_ids_per_w, nc_per_w
 
 
-def score_ref(tp, dec, s_live):
-    hd = scene_dict_to_heterodata(s_live, "spacer_rollout")
-    b = Batch.from_data_list([hd])
+def score_ref(tp, dec, s_live_per_w):
+    """Batched π_ref forward across W worlds. Single dec(...) call processes
+    all W scenes; b["agent"]["batch"] is then used to split outputs per world.
+
+    Returns list[(ref_logits, exec_tok, vmask, ref_ids)] of length W.
+    """
+    hds = [scene_dict_to_heterodata(s, f"spacer_rollout_{w}")
+           for w, s in enumerate(s_live_per_w)]
+    b = Batch.from_data_list(hds)
     tmap, tag = tp(b)
     to = lambda d: {k: (v.to(DEV) if torch.is_tensor(v) else v) for k, v in d.items()}
     with torch.no_grad():
         pred = dec(to(tmap), to(tag))
-    ref_ids = b["agent"]["id"].to(DEV).long()
-    return (pred["next_token_logits"], align_executed_tokens(tag["gt_idx"]).to(DEV),
-            pred["next_token_valid"].bool(), ref_ids)
+    agent_batch = b["agent"]["batch"].to(DEV).long()         # [A_ref_total]
+    ref_ids_all = b["agent"]["id"].to(DEV).long()
+    exec_tok_all = align_executed_tokens(tag["gt_idx"]).to(DEV)
+    logits_all = pred["next_token_logits"]
+    vmask_all = pred["next_token_valid"].bool()
+    out = []
+    for w in range(len(s_live_per_w)):
+        m = agent_batch == w
+        out.append((logits_all[m], exec_tok_all[m], vmask_all[m], ref_ids_all[m]))
+    return out
 
 
 def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
-    rec, s_live, theta_ids = rollout(env, policy)
-    ref_logits, exec_tok, vmask, ref_ids = score_ref(tp, dec, s_live)  # π_ref
-    ref_logits = ref_logits.detach()                    # π_ref FROZEN
-
-    # Eq.3 r_h on the π_θ-produced trajectory (exact, ref-agent space) — reward
-    _, rh = r_humanlike(ref_logits, exec_tok, vmask)
-
-    # Eq.5 EXACT per-(agent,step) KL (M5b): recompute π_θ logits WITH grad
-    # from stored obs so −β·KL actually trains π_θ; align temporally
-    # (decision k = ref-step k−REF_STEP_OFFSET) and per-agent by object_id.
-    gather, amatch = align_agents(ref_ids, theta_ids)       # [A_ref],[A_ref]
-    A_ref, T_ref, _ = ref_logits.shape
+    rec, s_live_per_w, theta_ids_per_w, nc_per_w = rollout(env, policy)
+    per_world = score_ref(tp, dec, s_live_per_w)            # list[W] of tuples
+    W = len(per_world)
+    # cumulative offsets to slice the flat per-step policy obs back per world
+    nc_offsets = [0]
+    for n in nc_per_w:
+        nc_offsets.append(nc_offsets[-1] + n)
     off = REF_STEP_OFFSET
-    th_steps = []
-    for j in range(T_ref):
-        k = j + off
-        if k < len(rec["obs"]):
-            th_steps.append(policy.logits(rec["obs"][k]))   # [nc,2048] w/ grad
-        else:
-            th_steps.append(policy.logits(rec["obs"][-1]))
-    th = torch.stack(th_steps, dim=1)                       # [nc, T_ref, 2048]
-    th_aligned = th[gather]                                 # [A_ref, T_ref, 2048]
-    kmask = vmask & amatch.unsqueeze(1)                     # [A_ref, T_ref]
-    _, kl = kl_theta_ref(th_aligned, ref_logits, kmask)     # exact, differentiable
+    rh_list, kl_list = [], []
+    for w, (ref_logits, exec_tok, vmask, ref_ids) in enumerate(per_world):
+        ref_logits = ref_logits.detach()                    # π_ref FROZEN
+        # skip empty/mismatched worlds rather than NaN-poisoning the mean
+        if ref_logits.numel() == 0 or nc_per_w[w] == 0:
+            continue
+        # Eq.3 r_h on this world's π_θ-rolled trajectory
+        _, rh_w = r_humanlike(ref_logits, exec_tok, vmask)
+        # Eq.5 differentiable KL: recompute π_θ logits WITH grad on this world's
+        # slice of each step's flat obs; align temporally (decision k = ref-step
+        # k−REF_STEP_OFFSET) and per-agent by object_id.
+        gather, amatch = align_agents(ref_ids, theta_ids_per_w[w])
+        if not amatch.any():
+            continue
+        A_ref, T_ref, _ = ref_logits.shape
+        s, e = nc_offsets[w], nc_offsets[w + 1]
+        th_steps = []
+        for j in range(T_ref):
+            k = j + off
+            obs_k = rec["obs"][k][s:e] if k < len(rec["obs"]) \
+                else rec["obs"][-1][s:e]
+            th_steps.append(policy.logits(obs_k))           # [nc_w, 2048] w/ grad
+        th = torch.stack(th_steps, dim=1)                   # [nc_w, T_ref, 2048]
+        th_aligned = th[gather]                             # [A_ref, T_ref, 2048]
+        kmask = vmask & amatch.unsqueeze(1)                 # [A_ref, T_ref]
+        _, kl_w = kl_theta_ref(th_aligned, ref_logits, kmask)
+        rh_list.append(rh_w); kl_list.append(kl_w)
 
-    # Eq.1 reward + PG; Eq.2 loss (min form: −L_PPO + β·D_KL)
+    # Equal-weight aggregation over worlds (standard PPO vec-env aggregation;
+    # per-world means already weight agents/steps within each world).
+    if rh_list:
+        rh = torch.stack(rh_list).mean()
+        kl = torch.stack(kl_list).mean()
+    else:
+        rh = torch.zeros((), device=DEV)
+        kl = torch.zeros((), device=DEV)
+
+    # Eq.1 reward + PG; Eq.2 loss (min form: −L_PPO + β·D_KL).
+    # rec["rtask"] is already flat across worlds via env.get_rewards()[cmask].
     r_task = torch.stack([r.mean() for r in rec["rtask"]]).mean()
     r_total = r_task + alpha * rh
     logp = torch.stack([policy(o, action=a)[1].mean()
@@ -186,10 +257,10 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
     opt.step()
     return dict(r_task=float(r_task), r_h=float(rh), kl=float(kl),
                 loss=float(loss), gnorm=float(gnorm),
-                ndec=len(rec["tok"]))
+                ndec=len(rec["tok"]), worlds=W)
 
 
-def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag=""):
+def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1):
     """One training run; returns per-iter metrics.
 
     Variant 4 defaults (Table A2 best composite, paper-validated):
@@ -197,12 +268,18 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag=""):
       - w_goal=0.0        ⇒ goal reward dropped (set in build_env's EnvConfig)
       - r_task = r_inf    = −0.75·𝟙[collision] − 0.75·𝟙[off-road]
     Loss reduces to:  L = −L_PPO(r_inf) + β·KL(π_θ ‖ π_ref).
-    r_task therefore doubles as the reactivity proxy (lower ⇒ more unsafe)."""
-    env, _ = build_env(scenes)
+    r_task therefore doubles as the reactivity proxy (lower ⇒ more unsafe).
+
+    n_worlds : number of Madrona worlds simulated in parallel per iter (M5d).
+               Default 1 ⇒ identical to the pre-M5d single-world code path.
+    """
+    env, _ = build_env(scenes, n_worlds=n_worlds)
     obs0 = env.reset()
     odim = obs0[env.cont_agent_mask].shape[-1]
     policy = TokenPolicy(obs_dim=odim).to(DEV)
     tp, dec = load_ref()
+    # one shared token template; vehicles-first, padded to A_max. Per-world
+    # decode slices [:A_w] from this (all worlds share A_max from Madrona).
     policy._ttraj = tp._get_agent_shape_and_token_traj(
         torch.zeros(env.cont_agent_mask.shape[1], dtype=torch.long))[2]
     opt = torch.optim.Adam(policy.parameters(), lr=lr)
@@ -212,8 +289,9 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag=""):
     for it in range(iters):
         m = spacer_iteration(env, policy, opt, tp, dec, alpha, beta)
         hist.append(m)
-        print(f"  [{tag}β={beta}] it{it:02d}: r_task={m['r_task']:+.3f} "
-              f"r_h={m['r_h']:+.3f} KL={m['kl']:.3f} loss={m['loss']:+.3f} "
+        print(f"  [{tag}β={beta} W={n_worlds}] it{it:02d}: "
+              f"r_task={m['r_task']:+.3f} r_h={m['r_h']:+.3f} "
+              f"KL={m['kl']:.3f} loss={m['loss']:+.3f} "
               f"|g|={m['gnorm']:.2f}")
     dt = time.time() - t0
     dw = float((torch.cat([p.flatten() for p in policy.parameters()]) - w0)
@@ -232,12 +310,18 @@ if __name__ == "__main__":
                     " shows LLH adds nothing on top of KL. Set >0 only for"
                     " ablation.")
     ap.add_argument("--beta", type=float, default=0.1)
+    ap.add_argument("--worlds", type=int, default=1,
+                    help="Parallel Madrona worlds per iter (M5d). Default 1 "
+                    "matches the M5a–c single-world path; >1 batches rollout "
+                    "+ π_ref forward for N× samples per PPO update.")
     a = ap.parse_args()
 
     if a.mode == "smoke":                       # M5b faithful short run
         print(f"M5b faithful run: iters={a.iters} scenes={a.scenes} "
-              f"α={a.alpha} β={a.beta} (exact per-agent KL, differentiable)")
-        h, dw, dt = run(a.beta, a.iters, a.scenes, a.alpha, tag="")
+              f"worlds={a.worlds} α={a.alpha} β={a.beta} "
+              f"(exact per-agent KL, differentiable)")
+        h, dw, dt = run(a.beta, a.iters, a.scenes, a.alpha, tag="",
+                        n_worlds=a.worlds)
         fin = all(np.isfinite([h[-1]['loss'], h[-1]['kl'], h[-1]['r_h']]))
         print(f"params changed (mean|Δw|)={dw:.2e} | finite={fin} | "
               f"{dt:.1f}s ({a.iters/dt:.2f} it/s)")
@@ -246,11 +330,11 @@ if __name__ == "__main__":
               if (fin and dw > 0) else "M5b FAIL")
     else:                                       # M5c β-ablation + reactivity
         print(f"M5c ablation: {a.iters} iters/run, scenes={a.scenes}, "
-              f"α={a.alpha}, β∈{{0.0, {a.beta}}}")
+              f"worlds={a.worlds}, α={a.alpha}, β∈{{0.0, {a.beta}}}")
         res = {}
         for b in (0.0, a.beta):
             h, dw, dt = run(b, a.iters, a.scenes, a.alpha,
-                            tag="ABL ")
+                            tag="ABL ", n_worlds=a.worlds)
             kl = np.array([x['kl'] for x in h]); rt = np.array([x['r_task'] for x in h])
             rh = np.array([x['r_h'] for x in h])
             res[b] = dict(kl_mean=kl.mean(), kl_last=kl[-3:].mean(),

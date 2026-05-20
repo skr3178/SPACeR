@@ -118,5 +118,15 @@ Full per-stage deliverables + binary PASS/FAIL gate criteria + on-fail actions:
     diagnostic — see `spacer/STAGE_PLAN.md`. Cadence invariant: Eq. 5's
     closed-form KL needs π_θ and π_ref on the *same* action space *and*
     cadence, so 5 Hz requires a new 5 Hz *reference*, not just a faster policy.
+  - (c) **Reactivity / `r_task` event-detection: RESOLVED (Test 11).** Earlier
+    M5c saw `r_task = 0`; the diagnostic (`spacer/test_rtask_diagnostic.py`)
+    proved (i) `state`-dynamics does NOT bypass collision/off-road detection,
+    (ii) `collision_behavior="ignore"` does NOT zero the penalty, but (iii)
+    `ignore` is **edge-triggered** (one-step penalty per event). Fix:
+    `train_spacer.build_env` now uses `collision_behavior="stop"`
+    (level-triggered, sustained penalty ⇒ clear RL gradient). The S2.5 trigger
+    is **not** event-detection-related; whether 2 Hz is cadence-sluggish at
+    scale is the remaining (untested) S2.5 trigger — only checkable via a
+    longer run on the fixed config.
 
 ![comparison](image.png)

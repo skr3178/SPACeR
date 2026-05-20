@@ -166,3 +166,45 @@ docker run -d --name spacer --gpus all \
   catk-spacer:latest sleep infinity
 docker exec -it -w /catk spacer bash
 ```
+
+---
+
+## 9. M5d — multi-world rollout verification
+
+Adds `--worlds N` to `train_spacer.py`: N parallel Madrona worlds per iter
+(default 1 = pre-M5d single-world path). N× more (agent, step) samples per
+PPO update; same `−L_PPO + β·KL` loss.
+
+### 9a. Backward-compat: W=1 path still runs
+```bash
+docker exec -w /spacer spacer python train_spacer.py \
+  --mode smoke --iters 3 --scenes 4 --worlds 1
+```
+
+### 9b. Multi-world smoke (previously crashed with cmask[0] shape mismatch)
+```bash
+docker exec -w /spacer spacer python train_spacer.py \
+  --mode smoke --iters 3 --scenes 8 --worlds 4
+```
+
+### 9c. Throughput scaling — sweep W ∈ {1, 4, 8}
+```bash
+for W in 1 4 8; do
+  docker exec -w /spacer spacer python train_spacer.py \
+    --mode smoke --iters 5 --scenes 16 --worlds $W \
+    2>&1 | tee run_m5d_W${W}.log
+done
+# eyeball the trailing "X.Xs (Y.YY it/s)" line per run; it/s should strictly
+# increase with W until the 12 GB budget bites.
+```
+
+### 9d. β-ablation at W=4 (lower-variance than M5c's W=1)
+```bash
+docker exec -w /spacer spacer python train_spacer.py \
+  --mode ablate --iters 5 --scenes 8 --worlds 4 --beta 0.1
+```
+
+Pass criteria ([spacer/STAGE_PLAN.md](spacer/STAGE_PLAN.md) M5d):
+1. loop runs at `num_worlds > 1`
+2. it/s strictly improves with N
+3. no OOM at chosen N on 12 GB
