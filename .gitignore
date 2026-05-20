@@ -23,16 +23,10 @@ checkpoints/
 reference papers/
 *.pdf
 
-# Generated visualizations / figures (regenerable from code).
-Figures/
-viz_pi_ref.gif
-viz_pi_ref.png
-algorithm.png
-image.png
-*.jpg
-*.jpeg
+# Generated visualizations / figures are kept in-repo (small).
+# Excluded only: video files (large, regenerable from the .py viz scripts).
 *.mp4
-*.gif
+*.webm
 
 # =============================================================
 # Python / tooling
