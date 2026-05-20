@@ -1,0 +1,71 @@
+# =============================================================
+# External / large content — NOT in this repo
+# =============================================================
+
+# Cloned reference repos (each has its own .git → effectively submodules).
+# Caller is expected to clone these separately, e.g.:
+#   reference_code/catk      <- https://github.com/NVlabs/catk
+#   reference_code/gpudrive  <- https://github.com/Emerge-Lab/gpudrive
+#   reference_code/SMART     <- https://github.com/rainmaker22/SMART
+#   reference_code/nocturne_lab
+reference_code/
+
+# Model weights (download separately; see Dataset.md).
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.pkl
+
+# Papers / large PDFs.
+reference papers/
+*.pdf
+
+# Generated visualizations / figures (regenerable from code).
+Figures/
+viz_pi_ref.gif
+viz_pi_ref.png
+algorithm.png
+image.png
+*.jpg
+*.jpeg
+*.mp4
+*.gif
+
+# =============================================================
+# Python / tooling
+# =============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# =============================================================
+# IDE / OS
+# =============================================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =============================================================
+# Local secrets / env
+# =============================================================
+.env
+.env.*
+*.key
+credentials*
+
+# =============================================================
+# Keep dot-Claude metadata local
+# =============================================================
+.claude/
