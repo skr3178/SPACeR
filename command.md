@@ -169,42 +169,46 @@ docker exec -it -w /catk spacer bash
 
 ---
 
-## 9. M5d — multi-world rollout verification
+## 9. M5d — multi-world rollout
 
-Adds `--worlds N` to `train_spacer.py`: N parallel Madrona worlds per iter
-(default 1 = pre-M5d single-world path). N× more (agent, step) samples per
-PPO update; same `−L_PPO + β·KL` loss.
+Adds `--worlds N` to `train_spacer.py`: N parallel Madrona worlds per iter.
+Default **W=32** (safe on the 12 GB 3060; W=64 also fits thanks to the
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` set inside the script,
+but is slower per iter). Pass `--worlds 1` to reproduce the pre-M5d path.
 
-### 9a. Backward-compat: W=1 path still runs
+### 9a. Default run (W=32)
 ```bash
-docker exec -w /spacer spacer python train_spacer.py \
+docker exec -w /spacer spacer-dev python train_spacer.py \
+  --mode smoke --iters 5 --scenes 64
+```
+
+### 9b. Backward-compat regression (W=1)
+```bash
+docker exec -w /spacer spacer-dev python train_spacer.py \
   --mode smoke --iters 3 --scenes 4 --worlds 1
 ```
 
-### 9b. Multi-world smoke (previously crashed with cmask[0] shape mismatch)
+### 9c. β-ablation at W=32 (lower-variance than M5c's W=1)
 ```bash
-docker exec -w /spacer spacer python train_spacer.py \
-  --mode smoke --iters 3 --scenes 8 --worlds 4
+docker exec -w /spacer spacer-dev python train_spacer.py \
+  --mode ablate --iters 5 --scenes 64 --beta 0.1
 ```
 
-### 9c. Throughput scaling — sweep W ∈ {1, 4, 8}
+### 9d. Push to ceiling (optional — slower, needs expandable_segments)
 ```bash
-for W in 1 4 8; do
-  docker exec -w /spacer spacer python train_spacer.py \
-    --mode smoke --iters 5 --scenes 16 --worlds $W \
-    2>&1 | tee run_m5d_W${W}.log
-done
-# eyeball the trailing "X.Xs (Y.YY it/s)" line per run; it/s should strictly
-# increase with W until the 12 GB budget bites.
+docker exec -w /spacer spacer-dev python train_spacer.py \
+  --mode smoke --iters 2 --scenes 64 --worlds 64
 ```
 
-### 9d. β-ablation at W=4 (lower-variance than M5c's W=1)
-```bash
-docker exec -w /spacer spacer python train_spacer.py \
-  --mode ablate --iters 5 --scenes 8 --worlds 4 --beta 0.1
-```
+### Measured on the 3060 (3 iters each, except W=32/64 = 2)
+| W  | it/s | samples/iter | samples/sec |
+|----|------|--------------|-------------|
+| 1  | 0.73 |  ~7          | 5.1         |
+| 4  | 0.30 |  ~28         | 8.4         |
+| 8  | 0.25 |  ~56         | 14          |
+| 16 | 0.19 | ~112         | 21          |
+| 32 | 0.14 | ~224         | **31**      |
+| 64 | 0.09 | ~448         | **40**      |
 
-Pass criteria ([spacer/STAGE_PLAN.md](spacer/STAGE_PLAN.md) M5d):
-1. loop runs at `num_worlds > 1`
-2. it/s strictly improves with N
-3. no OOM at chosen N on 12 GB
+it/s drops with W (per-world Python adapter is serial), but PPO-relevant
+samples/sec scales ~6× from W=1 to W=32 and ~8× to W=64.

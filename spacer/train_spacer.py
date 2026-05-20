@@ -13,6 +13,11 @@ Eq.5 KL uses π_θ's per-decision logits vs π_ref's per-step distribution at th
 scene level (smoke proxy). The agent-id map is the remaining task before a
 faithful training run.
 """
+import os
+# M5d: avoid VRAM fragmentation in the W=64 π_ref batched forward (12 GB 3060).
+# Must be set before torch is imported. PyTorch's recommended fix for the same
+# OOM message we observed at W=64 without it (~647 MB reserved-but-unallocated).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import sys, time, dataclasses, math, torch
 sys.path.insert(0, "/catk"); sys.path.insert(0, "/spacer")
 from omegaconf import OmegaConf
@@ -310,10 +315,11 @@ if __name__ == "__main__":
                     " shows LLH adds nothing on top of KL. Set >0 only for"
                     " ablation.")
     ap.add_argument("--beta", type=float, default=0.1)
-    ap.add_argument("--worlds", type=int, default=1,
-                    help="Parallel Madrona worlds per iter (M5d). Default 1 "
-                    "matches the M5a–c single-world path; >1 batches rollout "
-                    "+ π_ref forward for N× samples per PPO update.")
+    ap.add_argument("--worlds", type=int, default=32,
+                    help="Parallel Madrona worlds per iter (M5d). Default 32 "
+                    "(safe on 12 GB 3060; W=64 also fits with the baked-in "
+                    "expandable_segments setting but is slower per iter). "
+                    "Pass --worlds 1 to reproduce the pre-M5d single-world path.")
     a = ap.parse_args()
 
     if a.mode == "smoke":                       # M5b faithful short run
