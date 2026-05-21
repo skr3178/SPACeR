@@ -1,0 +1,47 @@
+{
+  "ckpt": "/spacer/checkpoints/latest.pt",
+  "config": {
+    "scenes": 2,
+    "worlds": 1,
+    "dynamics": "state",
+    "collision_behavior": "stop",
+    "variant": "V4 (KL + r_inf)"
+  },
+  "arms": {
+    "trained": {
+      "n_scenes": 2,
+      "n_agents_total": 14,
+      "collision_rate": 0.2857142984867096,
+      "off_road_rate": 0.0,
+      "goal_rate": 0.0,
+      "ade_mean_m": 5220.307052695309,
+      "ade_n_agents": 52,
+      "r_task_mean": -0.1190476194024086,
+      "r_h_mean": -1.1080068945884705,
+      "kl_mean": 6.110249042510986,
+      "entropy_mean": 7.624301433563232,
+      "wall_time_s": 2.747471332550049,
+      "ckpt_it": 2,
+      "ckpt_meta": {
+        "beta": 0.1,
+        "alpha": 0.0,
+        "n_worlds": 1,
+        "lr": 0.0003
+      }
+    },
+    "random": {
+      "n_scenes": 2,
+      "n_agents_total": 14,
+      "collision_rate": 0.2857142984867096,
+      "off_road_rate": 0.0,
+      "goal_rate": 0.0,
+      "ade_mean_m": 4954.40910682654,
+      "ade_n_agents": 52,
+      "r_task_mean": -0.0873015895485878,
+      "r_h_mean": -1.0908308029174805,
+      "kl_mean": 6.294254779815674,
+      "entropy_mean": 7.624619007110596,
+      "wall_time_s": 2.6122491359710693
+    }
+  }
+}

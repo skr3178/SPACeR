@@ -696,6 +696,84 @@ no held-out WOSAC eval.
 
 ---
 
+## Test 15 — coordinate-frame bug: rollout ran in the wrong frame  ✅ FIXED
+
+**Discovery.** While building `eval_quick.py` (Phase A eval), the ADE-vs-GT
+metric came out at ~4,400 m — absurd. A t0/t10 diagnostic (rolled vs logged
+position at successive steps) localised it:
+
+```
+t00 ag0: rolled=(−45.9, 5.1)      gt=(−45.9, 5.1)      d=0.0      ← identical
+t10 ag0: rolled=(−4643.9, 3406.1) gt=(−37.2, −1.2)     d=5729.9   ← +world_mean
+```
+
+At t=0 the rolled and logged trajectories coincide; at the **first
+token-step** every agent jumps by exactly `world_mean ≈ (−4601, 3403)` — a
+**5.7 km teleport**.
+
+**Root cause.** `gpudrive_to_smart.extract_gpudrive_scene()` called
+`restore_mean()` on both the agent trajectories and the road graph →
+returned the **global** frame. `train_spacer.rollout()` seeded `prev_pos`
+from that, so the token decoder produced **global**-frame poses, and
+`set_state()` fed them straight into GPUDrive — whose simulator
+(`set_state` input, `GlobalEgoState` output, road graph, collision/off-road
+detection) operates in the **mean-centered (local)** frame. One frame
+(`restore_mean`) was fighting the entire rest of the system.
+
+**Impact (what the bug did / didn't corrupt):**
+
+| Signal | Under the bug |
+|---|---|
+| KL, r_h, entropy | ✅ valid — pure logit quantities, frame-independent |
+| Collision / r_task | ✅ mostly valid — collisions are *relative* geometry, preserved under a uniform offset |
+| **Off-road** | ❌ **dead** — agents teleported 5.7 km from any road ⇒ off-road never fired. Explains `off_road_rate = 0.000` in every prior eval; the −0.75·off-road term in Variant 4 contributed **nothing** in Tests 12–14. |
+| minADE / positional realism | ❌ meaningless — agents off the map |
+
+This is *why* earlier Tests 12–14 showed clean KL/entropy curves yet flat
+task metrics: KL is a distribution-matching objective on token logits and
+closes regardless of whether the simulation is physically sensible.
+
+**Fix (Option 1 — canonical local frame).** Removed the two `restore_mean()`
+calls in `extract_gpudrive_scene()`; it now returns the **sim-native
+(mean-centered)** frame for agents *and* road graph. `mean_xy` is still
+returned for any caller that wants global. No change needed in
+`rollout()` — it inherits the corrected frame. The whole pipeline
+(sim, rollout, decoder, adapter) is now one frame.
+
+**Verification:**
+
+| Check | Before | After |
+|---|---|---|
+| t10 rolled-vs-GT distance | 5,730 m | **2.6–9.7 m** ✅ |
+| `off_road` events (random policy, 7 agents) | always 0 | **6** ✅ (detection now alive) |
+| Adapter `test_adapter_live.py` logged NLL | 3.460 | **3.464** ✅ (Δ 0.004 — SMART is agent-relative, frame-invariant; the fix did not alter adapter behaviour) |
+
+**Newly-surfaced (consequences, not regressions):**
+- Controlled agents that go off-road are parked by GPUDrive at a ~−11000
+  sentinel. Previously invisible (agents were in empty wilderness, never
+  off-road); now real.
+- `eval_quick.py` metric corrections that followed:
+  1. **Sentinel masking** — ADE skips ~−11000 steps (else ~15 km error).
+  2. **Controlled-agents-only** — ADE was averaging over all 64 agents/world;
+     the ~57 non-controlled are log-replayed (`rolled == gt` ⇒ ADE 0),
+     swamping the metric and giving an untrained model a fake <1 m minADE.
+  3. **Full-coverage `min`** — minADE now mins only over rollouts where the
+     agent stayed on-map its whole GT-valid window, killing the
+     "leave-early ⇒ artificially-low-ADE" bias; `ade_completion_rate`
+     reports how many controlled agents qualified.
+  After all three, minADE is sane-magnitude and correctly ranks the
+  broken-frame `it200` checkpoint *below* a random policy.
+
+**Consequence.** The `it200` checkpoint and Tests 12–14 were all trained in
+the broken frame. KL/entropy *curves* remain valid (frame-independent), but
+off-road pressure was absent and positions were nonsensical ⇒ **re-train
+required**. Test 16 is the corrected-frame re-train.
+
+**Files:** `spacer/gpudrive_to_smart.py` (2 `restore_mean` removed),
+`spacer/eval_quick.py` (sentinel mask, controlled-only, full-coverage min).
+
+---
+
 ## Combined status
 
 | Piece | Status |
@@ -712,6 +790,7 @@ no held-out WOSAC eval.
 | **200-iter online training loop** (full Architecture.md loop at scale) | ✅ **Test 12 — KL 6.14→0.30, r_task −0.112→−0.071, stable, anchored** |
 | **Canonical β=0.01 reproduction** (paper's stated β) | ✅ **Test 13 — runs cleanly; at 22 k env-step budget the anchor-vs-task trade reverses (β=0.1 wins at this scale); paper's β=0.01 needs paper-scale budget to dominate** |
 | **Multi-world training** (W=32, paper-spec sample regime) | ✅ **Test 14 — KL 5.66 → 0.94 (real equilibrium, not collapse); r_h −0.665 stable; W=32 reproduces SPACeR's intended training *dynamic*, not just mechanism** |
+| **Coordinate-frame bug** (rollout ran in global, sim is local) | ✅ **Test 15 — FIXED**: `extract_gpudrive_scene` no longer `restore_mean`s; t10 drift 5730 m → 7 m; off-road detection revived (0 → 6); adapter NLL unchanged. Tests 12–14 / `it200` were broken-frame ⇒ re-train. |
 | Convergent paper-scale run | ✗ out of reach on 3060 (documented ceiling) |
 
 **The entire SPACeR mechanism is implemented, numerically exact, and

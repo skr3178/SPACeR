@@ -74,16 +74,26 @@ def _to_np(x):
 
 
 def extract_gpudrive_scene(env, world_idx: int = 0, device: str = "cuda") -> dict:
-    """Pull global-frame agent trajectories + road graph for one world."""
+    """Pull agent trajectories + road graph for one world, in the **sim-native
+    (mean-centered) frame**.
+
+    Frame note: GPUDrive's simulator — `set_state` input, `GlobalEgoState`
+    output, collision/off-road detection — all operate in the mean-centered
+    frame. We deliberately do NOT `restore_mean()` here so that decoded poses
+    fed back via `set_state` land in GPUDrive's own coordinates. (An earlier
+    version restored the mean → global frame; that teleported every agent by
+    ~world_mean on the first token-step, silently disabling off-road
+    detection. See test.md.) `mean_xy` is still returned so any caller that
+    genuinely wants the global frame can add it back.
+    """
     means_xy = env.sim.world_means_tensor().to_torch()[:, :2]
     mx, my = float(means_xy[world_idx, 0]), float(means_xy[world_idx, 1])
 
-    # --- agents: full 91-step logged trajectory in global frame ---
+    # --- agents: full 91-step logged trajectory, sim-native (mean-centered) ---
     log = LogTrajectory.from_tensor(
         env.sim.expert_trajectory_tensor(),
         env.num_worlds, env.max_agent_count, backend="torch",
     )
-    log.restore_mean(mean_x=means_xy[:, 0], mean_y=means_xy[:, 1])
     pos_xy = _to_np(log.pos_xy[world_idx])              # [A, 91, 2]
     vel_xy = _to_np(log.vel_xy[world_idx])              # [A, 91, 2]
     yaw = _to_np(log.yaw[world_idx]).reshape(-1, NUM_STEPS)        # [A, 91]
@@ -102,11 +112,12 @@ def extract_gpudrive_scene(env, world_idx: int = 0, device: str = "cuda") -> dic
     entity = _to_np(info[:, 4]).astype(int)
     cmask = _to_np(env.cont_agent_mask[world_idx]).astype(bool)
 
-    # --- road graph: global points + waymax type + segment id ---
+    # --- road graph: sim-native (mean-centered) points + waymax type + id ---
+    # No restore_mean — same frame as the agents above, so the adapter scene
+    # is internally consistent and matches GPUDrive's own road graph.
     rg = GlobalRoadGraphPoints.from_tensor(
         env.sim.map_observation_tensor(), backend="torch", device=device,
     )
-    rg.restore_mean(mean_x=means_xy[:, 0], mean_y=means_xy[:, 1])
     rg_x = _to_np(rg.x[world_idx]).reshape(-1)
     rg_y = _to_np(rg.y[world_idx]).reshape(-1)
     rg_type = _to_np(rg.vbd_type[world_idx]).reshape(-1).astype(int)

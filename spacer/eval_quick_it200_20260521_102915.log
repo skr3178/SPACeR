@@ -1,0 +1,34 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-21 04:59:17.415229: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-21 04:59:17.422622: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779339557.431089     128 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779339557.433717     128 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779339557.441178     128 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779339557.441187     128 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779339557.441188     128 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779339557.441189     128 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-21 04:59:17.443417: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Initialization finished
+[eval_quick] env: W=8 scenes=50 controlled=46 obs_dim=2984
+[eval_quick] arm=trained  loading ckpt: /spacer/checkpoints/ckpt_b0.1_W32_it000200.pt
+[eval_quick] arm=random   fresh TokenPolicy (untrained)
+[eval_quick] wrote /spacer/eval_runs/ckpt_b0.1_W32_it000200/quick_metrics.json
+
+--- summary (lower is better for coll/off/r_task/ADE; higher better for goal/r_h/entropy) ---
+metric                     trained      random     Δ (t-r)
+------------------------------------------------------------
+collision_rate              0.1757      0.1717     +0.0039
+off_road_rate               0.0000      0.0000     +0.0000
+goal_rate                   0.0000      0.0000     +0.0000
+ade_mean_m               4433.0968   4352.1655    +80.9313
+r_task_mean                -0.0662     -0.0653     -0.0009
+r_h_mean                   -0.9260     -0.9279     +0.0019
+kl_mean                     1.1426      5.1399     -3.9973
+entropy_mean                1.3788      7.6246     -6.2458
+wall_time_s               201.1971    200.5998     +0.5973

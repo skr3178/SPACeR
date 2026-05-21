@@ -69,6 +69,10 @@ Layers: (1) paper-required plumbing the paper didn't release — adapter, M1, M2
 Full per-stage deliverables + binary PASS/FAIL gate criteria + on-fail actions:
 **[spacer/STAGE_PLAN.md](spacer/STAGE_PLAN.md)**.
 
+Evaluation (M6) is broken out separately: **[Eval_Plan.md](Eval_Plan.md)** —
+phased quick-internal → full WOSAC, two-container architecture, WOMD download
+checklist.
+
 ## Remaining milestones
 
 - **M2 — π_θ token policy.** Reuse GPUDrive late-fusion MLP backbone (~65k
@@ -85,6 +89,53 @@ Full per-stage deliverables + binary PASS/FAIL gate criteria + on-fail actions:
 - **M4 — PPO+KL loop (Eq. 2).** Adapt GPUDrive PufferLib PPO; add `−β·D_KL`
   and `α·r_humanlike`; scaled-down run on the 3060 (few worlds, short).
 - **M5 — scale tuning** within 12 GB.
+
+## Training budget guidance — Fig A1 knee analysis (run-sizing reference)
+
+Derived by inspecting paper Fig A1(b) (β sweep, α=0 — the panel that exactly
+matches Variant 4). Use this section to size any long training run.
+
+Assumed axis: **linear, 0 → 1×10⁹ env-steps** (no intermediate decade labels
+in the figure; curve shapes consistent with linear, not log — confirmed by
+zooming the rendered PDF). Knee = where the rapid initial transient gives
+way to the slow plateau.
+
+**Where the knee falls in the paper's plots:**
+
+| β curve | Knee location (rough fraction of x range) | Approx env-steps |
+|---|---|---|
+| β=1.0 | ~5% — drops fastest | ~5×10⁷ |
+| **β=0.1 (our config)** | ~5–10% | **~5–10×10⁷** |
+| β=0.01 | ~10–15% | ~1×10⁸ |
+| β=0.0 | barely descends — no real knee | — |
+
+A knee is visible across all anchored configurations between **2×10⁷ and
+1×10⁸ env-steps**. 1×10⁸ is conservative; an earlier inflection appears by
+~2–3×10⁷.
+
+**Translating to our 3060 budget** (Test 14 baseline: 7.17×10⁵ env-steps in
+23 min at W=32, ≈ 0.14 it/s):
+
+| Target | env-steps | × Test 14 | Iters @ W=32 | Wall time |
+|---|---|---|---|---|
+| Start of knee (curves visibly bend) | 2×10⁷ | 28× | ~5,600 | **~11 h** (overnight) |
+| Full knee passed (rapid descent over) | 5×10⁷ | 70× | ~14,000 | ~28 h (≈ 1.2 days) |
+| Curves clearly plateauing | 1×10⁸ | 140× | ~28,000 | ~55 h (≈ 2.3 days) |
+| Paper's full training | 1×10⁹ | 1400× | ~280,000 | ~22 days (out of reach) |
+
+**Recommended minimum to see a major trend: ~2×10⁷ env-steps → ~5,000 iters
+at W=32 → ~11 h, overnight feasible.** That's the cheapest run that should
+produce a visible curve shape comparable to Fig A1's early descent — not the
+settled plateau, but enough trajectory to extrapolate from.
+
+**Caveat on the "knee" comparison:** Test 14 already shows a knee at iter
+50–100 (≈ 2–7×10⁵ env-steps) in just 23 min. That's *our* knee — likely
+because random-init π_θ has more headroom to anchor than the paper's
+warmer-started initialization (paper's curves start at D_KL ≈ 2.5, ours at
+≈ 5.66). What we *haven't* traced is the slow-tail descent from KL ≈ 0.9
+down to ≈ 0.5 that the paper shows between 5×10⁷ and 1×10⁹ env-steps —
+reaching meaningfully into that tail is what an overnight run actually
+buys, and the 2×10⁷-step target is the first step into it.
 
 ## Honest caveats
 

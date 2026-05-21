@@ -212,7 +212,7 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
     for n in nc_per_w:
         nc_offsets.append(nc_offsets[-1] + n)
     off = REF_STEP_OFFSET
-    rh_list, kl_list = [], []
+    rh_list, kl_list, ent_list = [], [], []
     for w, (ref_logits, exec_tok, vmask, ref_ids) in enumerate(per_world):
         ref_logits = ref_logits.detach()                    # π_ref FROZEN
         # skip empty/mismatched worlds rather than NaN-poisoning the mean
@@ -238,16 +238,23 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
         th_aligned = th[gather]                             # [A_ref, T_ref, 2048]
         kmask = vmask & amatch.unsqueeze(1)                 # [A_ref, T_ref]
         _, kl_w = kl_theta_ref(th_aligned, ref_logits, kmask)
-        rh_list.append(rh_w); kl_list.append(kl_w)
+        # H(π_θ) per-(agent,step), masked-mean — Fig A1 right panel
+        logp_th = torch.log_softmax(th_aligned, dim=-1)
+        ent_per = -(logp_th.exp() * logp_th).sum(-1)            # [A_ref, T_ref]
+        ent_w = ent_per[kmask].mean() if kmask.any() \
+                else torch.zeros((), device=DEV)
+        rh_list.append(rh_w); kl_list.append(kl_w); ent_list.append(ent_w)
 
     # Equal-weight aggregation over worlds (standard PPO vec-env aggregation;
     # per-world means already weight agents/steps within each world).
     if rh_list:
         rh = torch.stack(rh_list).mean()
         kl = torch.stack(kl_list).mean()
+        ent = torch.stack(ent_list).mean()
     else:
         rh = torch.zeros((), device=DEV)
         kl = torch.zeros((), device=DEV)
+        ent = torch.zeros((), device=DEV)
 
     # Eq.1 reward + PG; Eq.2 loss (min form: −L_PPO + β·D_KL).
     # rec["rtask"] is already flat across worlds via env.get_rewards()[cmask].
@@ -261,11 +268,30 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
     gnorm = torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
     opt.step()
     return dict(r_task=float(r_task), r_h=float(rh), kl=float(kl),
-                loss=float(loss), gnorm=float(gnorm),
+                ent=float(ent), loss=float(loss), gnorm=float(gnorm),
                 ndec=len(rec["tok"]), worlds=W)
 
 
-def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1):
+def save_ckpt(path, policy, opt, it, hist, meta):
+    """Atomic-ish: write to a `.tmp` then rename, so a kill mid-write doesn't
+    leave a half-file that confuses `--resume`."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    torch.save(dict(policy=policy.state_dict(), opt=opt.state_dict(),
+                    it=it, hist=hist, meta=meta), tmp)
+    os.replace(tmp, path)
+
+
+def load_ckpt(path, policy, opt):
+    """Restore policy + optimizer; return (next_it, hist, meta)."""
+    d = torch.load(path, map_location=DEV, weights_only=False)
+    policy.load_state_dict(d["policy"])
+    opt.load_state_dict(d["opt"])
+    return int(d["it"]), list(d.get("hist", [])), dict(d.get("meta", {}))
+
+
+def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
+        ckpt_dir=None, ckpt_every=0, resume=None):
     """One training run; returns per-iter metrics.
 
     Variant 4 defaults (Table A2 best composite, paper-validated):
@@ -275,8 +301,14 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1):
     Loss reduces to:  L = −L_PPO(r_inf) + β·KL(π_θ ‖ π_ref).
     r_task therefore doubles as the reactivity proxy (lower ⇒ more unsafe).
 
-    n_worlds : number of Madrona worlds simulated in parallel per iter (M5d).
-               Default 1 ⇒ identical to the pre-M5d single-world code path.
+    n_worlds   : number of Madrona worlds simulated in parallel per iter (M5d).
+                 Default 1 ⇒ identical to the pre-M5d single-world code path.
+    ckpt_dir   : if set, write checkpoints here every `ckpt_every` iters; also
+                 always writes a `latest.pt` after each save.
+    ckpt_every : save period in iters (0 disables; default 0).
+    resume     : path to a checkpoint to load before training starts. The
+                 (β, α, n_worlds) in the ckpt's meta are sanity-checked
+                 against the current call; mismatch warns but does not abort.
     """
     env, _ = build_env(scenes, n_worlds=n_worlds)
     obs0 = env.reset()
@@ -288,16 +320,33 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1):
     policy._ttraj = tp._get_agent_shape_and_token_traj(
         torch.zeros(env.cont_agent_mask.shape[1], dtype=torch.long))[2]
     opt = torch.optim.Adam(policy.parameters(), lr=lr)
+    meta = dict(beta=beta, alpha=alpha, n_worlds=n_worlds, lr=lr)
+    start_it, hist = 0, []
+    if resume:
+        start_it, hist, m_old = load_ckpt(resume, policy, opt)
+        for k in ("beta", "alpha", "n_worlds"):
+            if m_old.get(k) != meta[k]:
+                print(f"  [resume] WARNING meta mismatch on {k}: "
+                      f"ckpt={m_old.get(k)} now={meta[k]}")
+        print(f"  [resume] loaded {resume} → resuming at it{start_it}, "
+              f"{len(hist)} prior metrics")
     w0 = torch.cat([p.flatten() for p in policy.parameters()]).clone()
-    hist = []
     t0 = time.time()
-    for it in range(iters):
+    for it in range(start_it, iters):
         m = spacer_iteration(env, policy, opt, tp, dec, alpha, beta)
         hist.append(m)
         print(f"  [{tag}β={beta} W={n_worlds}] it{it:02d}: "
               f"r_task={m['r_task']:+.3f} r_h={m['r_h']:+.3f} "
-              f"KL={m['kl']:.3f} loss={m['loss']:+.3f} "
-              f"|g|={m['gnorm']:.2f}")
+              f"KL={m['kl']:.3f} H={m['ent']:.3f} "
+              f"loss={m['loss']:+.3f} |g|={m['gnorm']:.2f}")
+        if ckpt_dir and ckpt_every > 0 and ((it + 1) % ckpt_every == 0
+                                             or (it + 1) == iters):
+            fn = os.path.join(ckpt_dir,
+                              f"ckpt_b{beta}_W{n_worlds}_it{it+1:06d}.pt")
+            save_ckpt(fn, policy, opt, it + 1, hist, meta)
+            save_ckpt(os.path.join(ckpt_dir, "latest.pt"),
+                      policy, opt, it + 1, hist, meta)
+            print(f"  [ckpt] saved {fn}")
     dt = time.time() - t0
     dw = float((torch.cat([p.flatten() for p in policy.parameters()]) - w0)
                .abs().mean())
@@ -320,6 +369,15 @@ if __name__ == "__main__":
                     "(safe on 12 GB 3060; W=64 also fits with the baked-in "
                     "expandable_segments setting but is slower per iter). "
                     "Pass --worlds 1 to reproduce the pre-M5d single-world path.")
+    ap.add_argument("--ckpt-dir", default="/spacer/checkpoints",
+                    help="Directory for checkpoint files. Only used if "
+                    "--ckpt-every > 0.")
+    ap.add_argument("--ckpt-every", type=int, default=0,
+                    help="Save every N iters (0 disables). Default 0 ⇒ smoke "
+                    "runs leave no artifacts; set ≥ 50 for long runs.")
+    ap.add_argument("--resume", default=None,
+                    help="Path to a .pt checkpoint to resume from. Restores "
+                    "policy weights, Adam state, iter index, and history.")
     a = ap.parse_args()
 
     if a.mode == "smoke":                       # M5b faithful short run
@@ -327,7 +385,8 @@ if __name__ == "__main__":
               f"worlds={a.worlds} α={a.alpha} β={a.beta} "
               f"(exact per-agent KL, differentiable)")
         h, dw, dt = run(a.beta, a.iters, a.scenes, a.alpha, tag="",
-                        n_worlds=a.worlds)
+                        n_worlds=a.worlds, ckpt_dir=a.ckpt_dir,
+                        ckpt_every=a.ckpt_every, resume=a.resume)
         fin = all(np.isfinite([h[-1]['loss'], h[-1]['kl'], h[-1]['r_h']]))
         print(f"params changed (mean|Δw|)={dw:.2e} | finite={fin} | "
               f"{dt:.1f}s ({a.iters/dt:.2f} it/s)")
