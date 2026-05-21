@@ -774,6 +774,112 @@ required**. Test 16 is the corrected-frame re-train.
 
 ---
 
+## Test 16 — corrected-frame training + first real Phase-A eval  ✅ PASS
+
+First training run and evaluation entirely in the **corrected coordinate
+frame** (post-Test-15). The first numbers that are physically meaningful:
+off-road detection is live, positions are real.
+
+### 16a — corrected-frame W=32 re-train (from scratch)
+
+`train_spacer.py --mode smoke --iters 200 --scenes 64 --worlds 32 --beta 0.1
+--ckpt-every 50` — same config as Test 14, but in the corrected frame.
+
+| Window | r_task | r_h | KL | H |
+|---|---|---|---|---|
+| it 000–009 | −0.128 | −2.325 | 3.128 | 7.622 |
+| it 010–049 | −0.166 | −2.110 | 2.397 | 6.617 |
+| it 050–099 | **−0.205** | −1.881 | 1.324 | 3.864 |
+| it 100–149 | −0.134 | −2.182 | 1.002 | 4.531 |
+| it 150–199 | −0.127 | −2.224 | 0.949 | 4.609 |
+
+KL 3.20 → 0.95 · r_task non-zero **100%** of iters · worst −0.305 ·
+Δw 2.62×10⁻³ · finite throughout · VERDICT M5b OK.
+
+**vs broken-frame Test 14 — what the frame fix changed:**
+- **r_task 2–3× more negative** (−0.13…−0.21 vs −0.06…−0.08): the off-road
+  penalty is now *live* and contributes every iter (it was dead in Tests
+  12–14 — agents teleported off-map).
+- **Entropy settles ≈4.6, not ≈1.2**: the richer corrected-frame signal
+  (real off-road pressure) keeps ≈e⁴·⁶≈100 effective tokens vs ≈3 — no
+  mode-collapse.
+- **KL anchors to ≈0.95** — same endpoint as Test 14 (frame-independent, as
+  predicted).
+
+### 16b — Phase-A eval on the corrected-frame `it200` checkpoint
+
+`eval_quick.py --scene-batches 12 --worlds 8 --rollouts 6` (88 scenes after
+loader exhaustion, 528 rollouts/arm). Two arms on identical scenes.
+
+| Metric | trained (it200) | random | Δ (t−r) | Verdict |
+|---|---|---|---|---|
+| collision_rate ↓ | **0.095** | 0.186 | −0.092 | ✅ trained halves collisions |
+| off_road_rate ↓ | **0.298** | 0.532 | −0.234 | ✅ trained −44% off-road |
+| ade_completion_rate ↑ | **0.951** | 0.674 | +0.277 | ✅ 95% finish on-road vs 67% |
+| r_task_mean ↑ | −0.108 | −0.117 | +0.009 | ✅ marginally better |
+| min_ade_m ↓ | 25.75 | 21.998 | +3.75 | ⚠️ selection-bias — see note |
+| goal_rate ↑ | 0.014 | 0.140 | −0.126 | ⚠️ w_goal=0 (not optimised); random wandering hits logged endpoints more |
+| kl_mean ↓ | 0.958 | 3.057 | −2.099 | ✅ anchored to π_ref |
+| entropy_mean | 4.690 | 7.625 | −2.934 | ✅ sharpened from uniform |
+| throughput (scen/s) | 1.944 | 1.968 | — | RTX 3060, 2 Hz |
+
+**Headline:** the corrected-frame trained policy is **measurably safer than
+random** — collisions halved, off-road −44%, completion +28 pp. First
+evidence the SPACeR loop produces a useful policy; only possible now that
+off-road is a live signal.
+
+**minADE caveat (why trained looks "worse"):** minADE is computed only over
+agents that completed on-road. Trained completes 95%, random 67% — random's
+minADE *excludes its worst 33%* (off-road agents), trained's includes 95% of
+agents. Different completion pools ⇒ raw minADE not comparable across arms;
+must be read **with** `ade_completion_rate`.
+
+### 16c — comparison to paper Table 1 (WOSAC validation)
+
+Paper numbers: A100, **1×10⁹ env-steps**, 5 Hz, official WOSAC metric
+library, full `validation_interactive`. Ours: RTX 3060, **~1.4×10⁶
+env-steps** (200 iter × 32 worlds × ~220 agent-steps), 2 Hz,
+GPUDrive-internal metrics, 88 scenes. **This table is a direction/sanity
+check — NOT a parity claim.**
+
+| Method | Composite ↑ | Kinematic ↑ | Interactive ↑ | Map ↑ | minADE ↓ | Collision ↓ | Off-road ↓ | Throughput ↑ |
+|---|---|---|---|---|---|---|---|---|
+| PPO (paper) | 0.710 | 0.327 | 0.751 | 0.875 | 12.725 | 0.038 | 0.053 | 211.8 |
+| HF-PPO (paper) | 0.716 | 0.341 | 0.756 | 0.880 | 12.254 | 0.044 | 0.053 | 211.8 |
+| **SPACeR (paper)** | **0.741** | 0.411 | 0.779 | 0.880 | 4.101 | 0.036 | 0.056 | 211.8 |
+| SMART (paper, IL) | 0.720 | 0.450 | 0.725 | 0.870 | 1.840 | 0.17 | 0.13 | 22.5 |
+| CAT-K (paper, IL) | 0.766 | 0.490 | 0.792 | 0.890 | 1.470 | 0.06 | 0.09 | 22.5 |
+| **Ours — it200, V4** | n/a† | n/a† | n/a† | n/a† | 25.75‡ | 0.095 | 0.298 | 1.94§ |
+| Ours — random baseline | n/a† | n/a† | n/a† | n/a† | 22.00‡ | 0.186 | 0.532 | 1.97§ |
+
+† **Composite / Kinematic / Interactive / Map** need the official WOSAC
+metric library — deferred to **Phase D** (`Eval_Plan.md`). Not computable
+from GPUDrive internals.
+‡ **minADE not directly comparable**: ours is sentinel-masked +
+completion-gated (off-road agents excluded); the paper's is full-horizon.
+Magnitude gap (≈26 m vs 4.1 m) is expected — ~700× fewer env-steps, 2 Hz vs
+5 Hz cadence.
+§ **Throughput not comparable**: RTX 3060 @ 2 Hz vs A100 @ 5 Hz — different
+hardware *and* cadence. The ~110× gap is roughly the hardware/cadence ratio,
+not a method difference.
+
+**Honest reading of the comparison:**
+- On **Collision** our it200 (0.095) is ~2.6× the paper's SPACeR (0.036) —
+  same order of magnitude, far from a 1B-step converged policy but already
+  beating our own random baseline (0.186) by 2×.
+- On **Off-road** (0.298 vs 0.056) we are ~5× worse — the metric is alive
+  and improving (vs random 0.532) but 200 iters is nowhere near convergence.
+- The paper's headline **Composite 0.741** is unreachable without Phase D
+  (WOSAC library) — and unreachable *as a number* without paper-scale
+  training regardless.
+- **The valid comparison at our scale is trained-vs-random**, not
+  ours-vs-paper: the policy demonstrably learns (collision −49%, off-road
+  −44%). Ours-vs-paper is bounded by the documented 3060 budget ceiling.
+
+**Files:** `spacer/eval_runs/ckpt_b0.1_W32_it000200/quick_metrics.json`.
+
+---
+
 ## Combined status
 
 | Piece | Status |
@@ -791,6 +897,7 @@ required**. Test 16 is the corrected-frame re-train.
 | **Canonical β=0.01 reproduction** (paper's stated β) | ✅ **Test 13 — runs cleanly; at 22 k env-step budget the anchor-vs-task trade reverses (β=0.1 wins at this scale); paper's β=0.01 needs paper-scale budget to dominate** |
 | **Multi-world training** (W=32, paper-spec sample regime) | ✅ **Test 14 — KL 5.66 → 0.94 (real equilibrium, not collapse); r_h −0.665 stable; W=32 reproduces SPACeR's intended training *dynamic*, not just mechanism** |
 | **Coordinate-frame bug** (rollout ran in global, sim is local) | ✅ **Test 15 — FIXED**: `extract_gpudrive_scene` no longer `restore_mean`s; t10 drift 5730 m → 7 m; off-road detection revived (0 → 6); adapter NLL unchanged. Tests 12–14 / `it200` were broken-frame ⇒ re-train. |
+| **Corrected-frame training + Phase-A eval** | ✅ **Test 16** — re-trained W=32 in the fixed frame; eval shows trained ≫ random: collision 0.095 vs 0.186, off-road 0.298 vs 0.532, completion 0.95 vs 0.67. First physically-meaningful result; vs-paper table included (direction/sanity, not parity). |
 | Convergent paper-scale run | ✗ out of reach on 3060 (documented ceiling) |
 
 **The entire SPACeR mechanism is implemented, numerically exact, and

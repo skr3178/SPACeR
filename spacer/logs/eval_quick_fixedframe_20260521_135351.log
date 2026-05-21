@@ -23,3 +23,26 @@ Initialization finished
 [eval_quick] batch 3/12 done
 [eval_quick] batch 4/12 done
 [eval_quick] batch 5/12 done
+[eval_quick] batch 6/12 done
+[eval_quick] batch 7/12 done
+[eval_quick] batch 8/12 done
+[eval_quick] batch 9/12 done
+[eval_quick] batch 10/12 done
+[eval_quick] batch 11/12 done
+[eval_quick] data loader exhausted after 11 batches — stopping early
+[eval_quick] wrote /spacer/eval_runs/ckpt_b0.1_W32_it000200/quick_metrics.json
+
+--- summary  (↓ coll/off/r_task/minADE   ↑ goal/r_h/entropy/thru/compl) ---
+metric                            trained       random      Δ (t-r)
+--------------------------------------------------------------------
+collision_rate                     0.0948       0.1863      -0.0916
+off_road_rate                      0.2984       0.5325      -0.2341
+goal_rate                          0.0139       0.1397      -0.1258
+min_ade_m                         25.7451      21.9986      +3.7465
+ade_completion_rate                0.9514       0.6743      +0.2770
+r_task_mean                       -0.1082      -0.1173      +0.0091
+r_h_mean                          -2.4423      -2.5543      +0.1120
+kl_mean                            0.9581       3.0570      -2.0989
+entropy_mean                       4.6903       7.6246      -2.9343
+throughput_scenarios_per_s         1.9444       1.9676      -0.0232
+wall_time_s                      271.5482     268.3496      +3.1987

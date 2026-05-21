@@ -73,6 +73,9 @@ Evaluation (M6) is broken out separately: **[Eval_Plan.md](Eval_Plan.md)** —
 phased quick-internal → full WOSAC, two-container architecture, WOMD download
 checklist.
 
+Training configuration (paper-extracted setup, our deviations, 3060
+feasibility, recommended run config): **[Training_Config.md](Training_Config.md)**.
+
 ## Remaining milestones
 
 - **M2 — π_θ token policy.** Reuse GPUDrive late-fusion MLP backbone (~65k

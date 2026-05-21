@@ -1,28 +1,28 @@
 {
   "ckpt": "/spacer/checkpoints/ckpt_b0.1_W32_it000200.pt",
   "config": {
-    "scene_batches": 1,
-    "worlds": 2,
-    "rollouts_per_scene": 3,
+    "scene_batches": 11,
+    "worlds": 8,
+    "rollouts_per_scene": 6,
     "dynamics": "state",
     "collision_behavior": "stop",
     "variant": "V4 (KL + r_inf)"
   },
   "arms": {
     "trained": {
-      "collision_rate": 0.20833333333333334,
-      "off_road_rate": 0.5833333333333334,
-      "goal_rate": 0.16666666666666666,
-      "r_task_mean": -0.1898148125037551,
-      "min_ade_m": 59.68754514058431,
-      "ade_completion_rate": 0.375,
-      "r_h_mean": -0.9956754446029663,
-      "kl_mean": 0.6927686333656311,
-      "entropy_mean": 1.2853102684020996,
-      "wall_time_s": 7.673394441604614,
-      "throughput_scenarios_per_s": 0.7819225305906881,
-      "n_scenes": 2,
-      "n_rollouts": 6,
+      "collision_rate": 0.0947604685683142,
+      "off_road_rate": 0.2984245717525482,
+      "goal_rate": 0.013873701858701126,
+      "r_task_mean": -0.10821283998137168,
+      "min_ade_m": 25.74506620211629,
+      "ade_completion_rate": 0.9513505478218396,
+      "r_h_mean": -2.442290327765725,
+      "kl_mean": 0.9580504406582225,
+      "entropy_mean": 4.690309047698975,
+      "wall_time_s": 271.5482032299042,
+      "throughput_scenarios_per_s": 1.9444061633247962,
+      "n_scenes": 88,
+      "n_rollouts": 528,
       "ckpt_it": 200,
       "ckpt_meta": {
         "beta": 0.1,
@@ -32,19 +32,19 @@
       }
     },
     "random": {
-      "collision_rate": 0.20833333333333334,
-      "off_road_rate": 0.5416666666666666,
-      "goal_rate": 0.16666666666666666,
-      "r_task_mean": -0.11574074439704418,
-      "min_ade_m": 16.72964687347412,
-      "ade_completion_rate": 0.625,
-      "r_h_mean": -2.3021085262298584,
-      "kl_mean": 3.0847671031951904,
-      "entropy_mean": 7.6246185302734375,
-      "wall_time_s": 7.618763208389282,
-      "throughput_scenarios_per_s": 0.7875293976052693,
-      "n_scenes": 2,
-      "n_rollouts": 6
+      "collision_rate": 0.18631427656068944,
+      "off_road_rate": 0.5324790997035577,
+      "goal_rate": 0.1396945590774218,
+      "r_task_mean": -0.11726291865731278,
+      "min_ade_m": 21.998601417952504,
+      "ade_completion_rate": 0.6743096638431567,
+      "r_h_mean": -2.554329893805764,
+      "kl_mean": 3.056952628222379,
+      "entropy_mean": 7.624618356878107,
+      "wall_time_s": 268.34955048561096,
+      "throughput_scenarios_per_s": 1.9675829493454344,
+      "n_scenes": 88,
+      "n_rollouts": 528
     }
   }
 }
