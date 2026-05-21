@@ -203,73 +203,151 @@ def score_ref(tp, dec, s_live_per_w):
     return out
 
 
+# ---------------------------------------------------------------------------
+# PPO update — ported from GPUDrive's PufferLib PPO
+# (`gpudrive/integrations/puffer/ppo.py`), the optimiser the SPACeR paper uses.
+# Algorithmic hyperparameters are paper Table A3 (verbatim). Scale params
+# (total steps, batch, minibatch) are emergent from --iters / --worlds — see
+# Training_Config.md. The closed-form KL anchor (Eq. 5) is added to the PPO
+# loss (Eq. 2); Variant 4 uses reward = r_task (α=0), KL as a loss term.
+# ---------------------------------------------------------------------------
+PPO_GAMMA       = 0.99      # discount factor
+PPO_GAE_LAMBDA  = 0.95      # GAE λ
+PPO_CLIP_COEF   = 0.2       # policy ratio clip
+PPO_VF_COEF     = 0.3       # value-loss weight
+PPO_ENT_COEF    = 1e-4      # entropy bonus
+PPO_MAX_GRAD    = 0.5       # grad-norm clip (Table A3; was 1.0 in compact loop)
+PPO_EPOCHS      = 4         # optimisation epochs per rollout
+PPO_N_MINIBATCH = 16        # minibatches per epoch (paper Table A3: 131072/8192)
+PPO_NORM_ADV    = True      # normalise advantages
+
+
+def _gae(rew, val, gamma, lam):
+    """GAE-λ per agent along the token-decision axis.
+    rew, val : [T, N] (one episode; value bootstrap = 0 past the end).
+    Returns (advantages[T,N], returns[T,N])."""
+    T, N = rew.shape
+    adv = torch.zeros_like(rew)
+    last = torch.zeros(N, device=rew.device)
+    zero = torch.zeros(N, device=rew.device)
+    for t in range(T - 1, -1, -1):
+        nextv = val[t + 1] if t + 1 < T else zero
+        delta = rew[t] + gamma * nextv - val[t]
+        last = delta + gamma * lam * last
+        adv[t] = last
+    return adv, adv + val
+
+
 def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
+    """One SPACeR training iteration: self-play rollout → π_ref scoring →
+    **PPO update** (GPUDrive PufferLib PPO, Table A3) with the closed-form
+    KL anchor (Eq. 5) added to the loss (Eq. 2)."""
     rec, s_live_per_w, theta_ids_per_w, nc_per_w = rollout(env, policy)
-    per_world = score_ref(tp, dec, s_live_per_w)            # list[W] of tuples
+    per_world = score_ref(tp, dec, s_live_per_w)
     W = len(per_world)
-    # cumulative offsets to slice the flat per-step policy obs back per world
-    nc_offsets = [0]
-    for n in nc_per_w:
-        nc_offsets.append(nc_offsets[-1] + n)
+    T = len(rec["tok"])
+    N = rec["tok"][0].shape[0]                       # nc_total (flat over W)
     off = REF_STEP_OFFSET
-    rh_list, kl_list, ent_list = [], [], []
-    for w, (ref_logits, exec_tok, vmask, ref_ids) in enumerate(per_world):
-        ref_logits = ref_logits.detach()                    # π_ref FROZEN
-        # skip empty/mismatched worlds rather than NaN-poisoning the mean
-        if ref_logits.numel() == 0 or nc_per_w[w] == 0:
+
+    # --- stack rollout records → [T, N] (all detached; PPO recomputes) -----
+    obs   = torch.stack(rec["obs"])                  # [T, N, D]
+    act   = torch.stack(rec["tok"])                  # [T, N]
+    oldlp = torch.stack(rec["lp"])                   # [T, N]
+    val   = torch.stack(rec["val"]).reshape(T, N)    # [T, N]
+    rew   = torch.stack([r.reshape(N) for r in rec["rtask"]])      # [T, N]
+    roll_logits = torch.stack(rec["logits"])         # [T, N, 2048] rollout-time
+
+    # --- GAE (Variant 4: GAE reward = r_task) ------------------------------
+    adv, ret = _gae(rew, val, PPO_GAMMA, PPO_GAE_LAMBDA)
+
+    # --- π_ref logits scattered into the flat [T, N] order -----------------
+    # ref-step j ↔ decision k = j + REF_STEP_OFFSET; per-agent align by id.
+    ref_logits = torch.zeros(T, N, policy.n_tokens, device=DEV)
+    ref_valid  = torch.zeros(T, N, dtype=torch.bool, device=DEV)
+    nc_off = [0]
+    for n in nc_per_w:
+        nc_off.append(nc_off[-1] + n)
+    rh_list = []
+    for w, (rl, exec_tok, vmask, ref_ids) in enumerate(per_world):
+        rl = rl.detach()                             # π_ref FROZEN
+        if rl.numel() == 0 or nc_per_w[w] == 0:
             continue
-        # Eq.3 r_h on this world's π_θ-rolled trajectory
-        _, rh_w = r_humanlike(ref_logits, exec_tok, vmask)
-        # Eq.5 differentiable KL: recompute π_θ logits WITH grad on this world's
-        # slice of each step's flat obs; align temporally (decision k = ref-step
-        # k−REF_STEP_OFFSET) and per-agent by object_id.
+        _, rh_w = r_humanlike(rl, exec_tok, vmask)   # Eq.3 (logged)
+        rh_list.append(rh_w)
         gather, amatch = align_agents(ref_ids, theta_ids_per_w[w])
         if not amatch.any():
             continue
-        A_ref, T_ref, _ = ref_logits.shape
-        s, e = nc_offsets[w], nc_offsets[w + 1]
-        th_steps = []
-        for j in range(T_ref):
-            k = j + off
-            obs_k = rec["obs"][k][s:e] if k < len(rec["obs"]) \
-                else rec["obs"][-1][s:e]
-            th_steps.append(policy.logits(obs_k))           # [nc_w, 2048] w/ grad
-        th = torch.stack(th_steps, dim=1)                   # [nc_w, T_ref, 2048]
-        th_aligned = th[gather]                             # [A_ref, T_ref, 2048]
-        kmask = vmask & amatch.unsqueeze(1)                 # [A_ref, T_ref]
-        _, kl_w = kl_theta_ref(th_aligned, ref_logits, kmask)
-        # H(π_θ) per-(agent,step), masked-mean — Fig A1 right panel
-        logp_th = torch.log_softmax(th_aligned, dim=-1)
-        ent_per = -(logp_th.exp() * logp_th).sum(-1)            # [A_ref, T_ref]
-        ent_w = ent_per[kmask].mean() if kmask.any() \
-                else torch.zeros((), device=DEV)
-        rh_list.append(rh_w); kl_list.append(kl_w); ent_list.append(ent_w)
+        A_ref, T_ref, _ = rl.shape
+        Te = min(T_ref, T - off)
+        if Te <= 0:
+            continue
+        mi = amatch.nonzero(as_tuple=True)[0]        # matched ref agents
+        cols = nc_off[w] + gather[mi].long()         # their π_θ flat columns
+        ref_logits[off:off + Te, cols] = rl[mi, :Te].transpose(0, 1)
+        ref_valid[off:off + Te, cols] = vmask[mi, :Te].transpose(0, 1)
+    rh = torch.stack(rh_list).mean() if rh_list else torch.zeros((), device=DEV)
 
-    # Equal-weight aggregation over worlds (standard PPO vec-env aggregation;
-    # per-world means already weight agents/steps within each world).
-    if rh_list:
-        rh = torch.stack(rh_list).mean()
-        kl = torch.stack(kl_list).mean()
-        ent = torch.stack(ent_list).mean()
-    else:
-        rh = torch.zeros((), device=DEV)
-        kl = torch.zeros((), device=DEV)
-        ent = torch.zeros((), device=DEV)
+    # --- rollout-time KL / entropy (logged — comparable to Tests 12-16) ----
+    with torch.no_grad():
+        lp_th = torch.log_softmax(roll_logits.float(), dim=-1)
+        lp_rf = torch.log_softmax(ref_logits.float(), dim=-1)
+        kl_pa  = (lp_th.exp() * (lp_th - lp_rf)).sum(-1)        # [T, N]
+        ent_pa = -(lp_th.exp() * lp_th).sum(-1)                 # [T, N]
+        kl_log  = (kl_pa[ref_valid].mean() if ref_valid.any()
+                   else torch.zeros((), device=DEV))
+        ent_log = (ent_pa[ref_valid].mean() if ref_valid.any()
+                   else ent_pa.mean())
+    r_task = rew.mean()
 
-    # Eq.1 reward + PG; Eq.2 loss (min form: −L_PPO + β·D_KL).
-    # rec["rtask"] is already flat across worlds via env.get_rewards()[cmask].
-    r_task = torch.stack([r.mean() for r in rec["rtask"]]).mean()
-    r_total = r_task + alpha * rh
-    logp = torch.stack([policy(o, action=a)[1].mean()
-                        for o, a in zip(rec["obs"], rec["tok"])])
-    l_pg = -(logp.mean() * r_total.detach())   # ≈ −L_PPO
-    loss = l_pg + beta * kl                                  # Eq.2 (min form)
-    opt.zero_grad(); loss.backward()
-    gnorm = torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-    opt.step()
-    return dict(r_task=float(r_task), r_h=float(rh), kl=float(kl),
-                ent=float(ent), loss=float(loss), gnorm=float(gnorm),
-                ndec=len(rec["tok"]), worlds=W)
+    # --- PPO update: update_epochs × minibatches (Table A3) ----------------
+    flat = lambda x: x.reshape(T * N, *x.shape[2:])
+    f_obs, f_act   = flat(obs), flat(act)
+    f_oldlp        = flat(oldlp)
+    f_adv, f_ret   = flat(adv), flat(ret)
+    f_reflog, f_rv = flat(ref_logits), flat(ref_valid)
+    n_samp = T * N
+    mb = max(1, n_samp // PPO_N_MINIBATCH)
+    loss_acc = pg_acc = v_acc = klu_acc = 0.0
+    gnorm = 0.0
+    nupd = 0
+    for _ep in range(PPO_EPOCHS):
+        perm = torch.randperm(n_samp, device=DEV)
+        for s0 in range(0, n_samp, mb):
+            idx = perm[s0:s0 + mb]
+            o, a = f_obs[idx], f_act[idx]
+            _, newlp, entropy, newval = policy(o, action=a)     # PPO forward
+            newval = newval.reshape(-1)
+            ratio = (newlp - f_oldlp[idx]).exp()
+            A = f_adv[idx]
+            if PPO_NORM_ADV:
+                A = (A - A.mean()) / (A.std() + 1e-8)
+            pg = torch.max(-A * ratio,
+                           -A * torch.clamp(ratio, 1 - PPO_CLIP_COEF,
+                                            1 + PPO_CLIP_COEF)).mean()
+            v_loss = 0.5 * ((newval - f_ret[idx]) ** 2).mean()
+            # closed-form KL anchor (Eq. 5) on this minibatch — π_θ moves each
+            # update, π_ref is frozen, so recompute π_θ logits here.
+            rv = f_rv[idx]
+            if rv.any():
+                lpth = torch.log_softmax(policy.logits(o), dim=-1)
+                lprf = torch.log_softmax(f_reflog[idx], dim=-1)
+                kl_mb = (lpth.exp() * (lpth - lprf)).sum(-1)[rv].mean()
+            else:
+                kl_mb = torch.zeros((), device=DEV)
+            # Eq.2 (min form): −L_PPO + β·KL ; −L_PPO = pg − ent·c_ent + v·c_vf
+            loss = (pg - PPO_ENT_COEF * entropy.mean()
+                    + PPO_VF_COEF * v_loss + beta * kl_mb)
+            opt.zero_grad(); loss.backward()
+            gnorm = float(torch.nn.utils.clip_grad_norm_(
+                policy.parameters(), PPO_MAX_GRAD))
+            opt.step()
+            loss_acc += float(loss); pg_acc += float(pg)
+            v_acc += float(v_loss); klu_acc += float(kl_mb); nupd += 1
+
+    return dict(r_task=float(r_task), r_h=float(rh), kl=float(kl_log),
+                ent=float(ent_log), loss=loss_acc / nupd, gnorm=gnorm,
+                pg=pg_acc / nupd, vloss=v_acc / nupd, kl_upd=klu_acc / nupd,
+                ndec=T, worlds=W)
 
 
 def save_ckpt(path, policy, opt, it, hist, meta):
@@ -310,6 +388,7 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
                  (β, α, n_worlds) in the ckpt's meta are sanity-checked
                  against the current call; mismatch warns but does not abort.
     """
+    torch.manual_seed(42)                       # Table A3: seed = 42
     env, _ = build_env(scenes, n_worlds=n_worlds)
     obs0 = env.reset()
     odim = obs0[env.cont_agent_mask].shape[-1]
@@ -338,6 +417,7 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
         print(f"  [{tag}β={beta} W={n_worlds}] it{it:02d}: "
               f"r_task={m['r_task']:+.3f} r_h={m['r_h']:+.3f} "
               f"KL={m['kl']:.3f} H={m['ent']:.3f} "
+              f"pg={m['pg']:+.3f} vL={m['vloss']:.3f} "
               f"loss={m['loss']:+.3f} |g|={m['gnorm']:.2f}")
         if ckpt_dir and ckpt_every > 0 and ((it + 1) % ckpt_every == 0
                                              or (it + 1) == iters):
@@ -364,11 +444,13 @@ if __name__ == "__main__":
                     " shows LLH adds nothing on top of KL. Set >0 only for"
                     " ablation.")
     ap.add_argument("--beta", type=float, default=0.1)
-    ap.add_argument("--worlds", type=int, default=32,
-                    help="Parallel Madrona worlds per iter (M5d). Default 32 "
-                    "(safe on 12 GB 3060; W=64 also fits with the baked-in "
-                    "expandable_segments setting but is slower per iter). "
-                    "Pass --worlds 1 to reproduce the pre-M5d single-world path.")
+    ap.add_argument("--worlds", type=int, default=48,
+                    help="Parallel Madrona worlds per iter (M5d). Default 48 "
+                    "— Test 17 ceiling sweep: W=48 is the safe max on the "
+                    "12 GB 3060 (~10.5 GB peak, ~1.8 GB headroom); W=64 is the "
+                    "hard ceiling (~11.9 GB, ~0.4 GB free — risky for long "
+                    "runs); W=80 OOMs. Pass --worlds 1 to reproduce the "
+                    "pre-M5d single-world path.")
     ap.add_argument("--ckpt-dir", default="/spacer/checkpoints",
                     help="Directory for checkpoint files. Only used if "
                     "--ckpt-every > 0.")

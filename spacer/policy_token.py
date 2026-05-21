@@ -77,6 +77,7 @@ class TokenPolicy(nn.Module):
         # NeuralNet needs a config to set vbd_in_obs / reward offsets.
         self.net = NeuralNet(
             action_dim=n_tokens, hidden_dim=hidden_dim, obs_dim=obs_dim,
+            dropout=0.01,                       # paper A.3 (NeuralNet default 0.0)
             config={"reward_type": reward_type, "vbd_in_obs": vbd_in_obs},
         )
 

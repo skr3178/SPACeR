@@ -880,6 +880,80 @@ not a method difference.
 
 ---
 
+## Test 17 — world-count ceiling sweep (RTX 3060 12 GB)  ✅ DONE
+
+Empirical max parallel-worlds the 3060 can train SPACeR at. One process per W
+(Madrona/CUDA cannot re-init in-process); each probe builds the env at W
+worlds and runs 2 full `spacer_iteration` steps (rollout + π_ref score + KL +
+backward + opt.step — the real training-memory peak), with
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (matches `train_spacer.py`).
+Driver: `spacer/world_sweep.py` + a per-W loop sampling `nvidia-smi`.
+
+**Result (GPU otherwise idle, 261 MiB baseline):**
+
+| W  | Result | torch peak alloc | torch peak reserved | nvidia-smi peak (MiB) | free of 12288 |
+|----|--------|------------------|---------------------|-----------------------|---------------|
+| 32 | ✅ OK  | 1.75 GB          | 2.05 GB             | 8693                  | ~3.6 GB       |
+| 48 | ✅ OK  | 2.88 GB          | 3.39 GB             | 10517                 | ~1.8 GB       |
+| 64 | ✅ OK  | 3.90 GB          | 4.41 GB             | 11875                 | **~0.4 GB**   |
+| 80 | ❌ OOM | —                | —                   | 11375 (crashed mid-alloc) | —         |
+
+**Findings:**
+
+- **Max trainable W = 64**, but *marginal* — 11875/12288 MiB, only ~413 MB
+  free. This is the knife-edge the `train_spacer.py:17-20` comment addresses:
+  `expandable_segments:True` is what makes W=64 fit at all. W=80 OOMs; W≈72
+  would too (~99 MiB/world extrapolation lands ~12.7 GB).
+- **`torch.cuda` peak ≪ nvidia-smi peak** — at W=64, torch reports 4.4 GB
+  reserved but the GPU shows 11.9 GB. The ~7.5 GB gap is GPUDrive's Madrona
+  simulator + CUDA context + cuBLAS/cuDNN workspaces, none of it tracked by
+  torch's allocator. Confirms the *simulator*, not the models, dominates VRAM.
+- **Scaling ≈ 99 MiB / world** on the nvidia-smi side (32→64 = +3182 MiB).
+- **W=48 is the safe practical max** (~1.8 GB headroom); **W=64 is the hard
+  ceiling** (no headroom — risky for long runs); **W=32** (our training
+  config) is conservative, leaving ~2× throughput unused.
+
+**Files:** `spacer/world_sweep.py`.
+
+---
+
+## Test 18 — PPO port + hyperparameter alignment to paper Table A3  ✅ smoke PASS
+
+`train_spacer.spacer_iteration` previously ran a **compact REINFORCE-style
+PG** (`l_pg = −logp·R̄`, one update/rollout — no GAE, clip, value loss, or
+minibatch epochs). Replaced with **PPO ported from the paper's actual
+optimiser**, `gpudrive/integrations/puffer/ppo.py` (PufferLib PPO): GAE,
+clipped surrogate, value loss, 4 minibatch epochs, advantage-norm, entropy
+bonus. Closed-form KL anchor (Eq. 5) added to the loss (Eq. 2) per minibatch.
+
+**Hyperparameters vs paper Table A3:**
+
+| Group | Status |
+|---|---|
+| 13 algorithmic params (γ, λ, clip 0.2, vf_coef 0.3, ent_coef 1e-4, max_grad_norm 0.5, epochs 4, norm_adv, clip_vloss false, vf_clip 0.2, lr 3e-4, anneal_lr false, seed 42) | ✅ **all matched verbatim** |
+| total_timesteps / batch_size | ❌ scale — unmatchable (set by `--iters`/`--worlds`; batch emergent ≈4k @ W=32) |
+| minibatch count | ⚠️ ours 8 vs paper's 16 (paper 131072/8192) — trivially changeable |
+| SPACeR loss: α=0, w_goal=0, collision/off-road −0.75 | ✅ matched (Variant 4) |
+| β (KL weight) | ⚠️ ours 0.1 vs paper 0.01 — deliberate (Test 13: 0.01 degenerate at our budget; both in paper's robust 0.01–1.0 band) |
+| net hidden dim 128 | ✅ matched (embed-dim 64 / dropout 0.01 not re-verified) |
+
+→ **The optimiser is now the paper's PPO**, not an approximation. Remaining
+differences are scale (unmatchable) or the deliberate β choice.
+
+**Smoke (3 iters, W=1, β=0.1):** runs end-to-end, finite, π_θ updates
+(Δw 7.7e-3); loss decomposition checks out (`pg + vf_coef·vL + β·KL`).
+`|g|` pre-clip is high (8–23, fresh-critic value loss + W=1 noise) — clipped
+safely by max_grad_norm 0.5; expected to settle at W≥32.
+
+**Caveats:** it is a faithful *port*, not literal GPUDrive code (their PPO is
+wired to GPUDrive's native policy — can't take our tokenised π_θ + adapter +
+KL). Not yet validated at scale — the 200-iter run is the verification gate.
+
+**Files:** `spacer/train_spacer.py` (`spacer_iteration` rewritten, `_gae` +
+`PPO_*` constants added).
+
+---
+
 ## Combined status
 
 | Piece | Status |
@@ -898,6 +972,8 @@ not a method difference.
 | **Multi-world training** (W=32, paper-spec sample regime) | ✅ **Test 14 — KL 5.66 → 0.94 (real equilibrium, not collapse); r_h −0.665 stable; W=32 reproduces SPACeR's intended training *dynamic*, not just mechanism** |
 | **Coordinate-frame bug** (rollout ran in global, sim is local) | ✅ **Test 15 — FIXED**: `extract_gpudrive_scene` no longer `restore_mean`s; t10 drift 5730 m → 7 m; off-road detection revived (0 → 6); adapter NLL unchanged. Tests 12–14 / `it200` were broken-frame ⇒ re-train. |
 | **Corrected-frame training + Phase-A eval** | ✅ **Test 16** — re-trained W=32 in the fixed frame; eval shows trained ≫ random: collision 0.095 vs 0.186, off-road 0.298 vs 0.532, completion 0.95 vs 0.67. First physically-meaningful result; vs-paper table included (direction/sanity, not parity). |
+| **World-count ceiling** (3060 12 GB) | ✅ **Test 17** — max trainable W=64 (marginal, ~0.4 GB free); W=48 safe practical max; W=80 OOMs. |
+| **PPO port + Table A3 alignment** | ✅ **Test 18** — compact PG replaced with the paper's PufferLib PPO; 13 algorithmic hyperparams matched verbatim; smoke passes; 200-iter validation pending. |
 | Convergent paper-scale run | ✗ out of reach on 3060 (documented ceiling) |
 
 **The entire SPACeR mechanism is implemented, numerically exact, and

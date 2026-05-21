@@ -1,0 +1,69 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-21 10:37:39.253387: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-21 10:37:39.260890: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779359859.269471    2270 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779359859.272033    2270 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779359859.279546    2270 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779359859.279558    2270 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779359859.279561    2270 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779359859.279563    2270 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-21 10:37:39.281804: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+M5b faithful run: iters=200 scenes=64 worlds=48 α=0.0 β=0.1 (exact per-agent KL, differentiable)
+Initialization finished
+  [β=0.1 W=48] it00: r_task=-0.103 r_h=-2.483 KL=3.315 H=7.625 pg=-0.052 vL=6.058 loss=+2.083 |g|=1.98
+  [β=0.1 W=48] it01: r_task=-0.113 r_h=-2.562 KL=2.944 H=7.513 pg=-0.060 vL=5.582 loss=+1.901 |g|=5.30
+  [β=0.1 W=48] it02: r_task=-0.106 r_h=-2.381 KL=2.896 H=7.447 pg=-0.063 vL=5.704 loss=+1.930 |g|=7.68
+  [β=0.1 W=48] it03: r_task=-0.105 r_h=-2.662 KL=2.496 H=7.322 pg=-0.056 vL=4.585 loss=+1.558 |g|=7.45
+  [β=0.1 W=48] it04: r_task=-0.094 r_h=-2.644 KL=2.463 H=7.177 pg=-0.048 vL=4.985 loss=+1.682 |g|=18.06
+  [β=0.1 W=48] it05: r_task=-0.100 r_h=-2.375 KL=2.446 H=6.944 pg=-0.037 vL=4.660 loss=+1.591 |g|=44.98
+  [β=0.1 W=48] it06: r_task=-0.124 r_h=-2.759 KL=2.082 H=6.715 pg=-0.037 vL=3.964 loss=+1.352 |g|=8.86
+  [β=0.1 W=48] it07: r_task=-0.136 r_h=-2.654 KL=2.108 H=6.560 pg=-0.039 vL=4.140 loss=+1.404 |g|=11.10
+  [β=0.1 W=48] it08: r_task=-0.117 r_h=-2.632 KL=1.903 H=6.416 pg=-0.037 vL=4.747 loss=+1.571 |g|=16.83
+  [β=0.1 W=48] it09: r_task=-0.109 r_h=-2.546 KL=1.906 H=6.140 pg=-0.037 vL=4.726 loss=+1.563 |g|=12.18
+  [β=0.1 W=48] it10: r_task=-0.092 r_h=-2.509 KL=1.751 H=5.985 pg=-0.029 vL=5.110 loss=+1.673 |g|=9.04
+  [β=0.1 W=48] it11: r_task=-0.064 r_h=-2.702 KL=1.728 H=5.917 pg=-0.030 vL=5.700 loss=+1.846 |g|=37.42
+  [β=0.1 W=48] it12: r_task=-0.123 r_h=-2.585 KL=1.566 H=5.774 pg=-0.032 vL=4.601 loss=+1.499 |g|=8.02
+  [β=0.1 W=48] it13: r_task=-0.154 r_h=-2.423 KL=1.470 H=5.413 pg=-0.029 vL=3.817 loss=+1.259 |g|=17.53
+  [β=0.1 W=48] it14: r_task=-0.105 r_h=-2.599 KL=1.489 H=5.373 pg=-0.032 vL=4.183 loss=+1.369 |g|=4.98
+  [β=0.1 W=48] it15: r_task=-0.098 r_h=-2.476 KL=1.460 H=5.375 pg=-0.028 vL=4.064 loss=+1.333 |g|=12.79
+  [β=0.1 W=48] it16: r_task=-0.094 r_h=-2.728 KL=1.384 H=5.453 pg=-0.036 vL=3.707 loss=+1.213 |g|=16.63
+  [β=0.1 W=48] it17: r_task=-0.103 r_h=-2.679 KL=1.429 H=5.211 pg=-0.029 vL=3.780 loss=+1.246 |g|=5.26
+  [β=0.1 W=48] it18: r_task=-0.070 r_h=-2.833 KL=1.399 H=5.356 pg=-0.029 vL=4.256 loss=+1.386 |g|=14.48
+  [β=0.1 W=48] it19: r_task=-0.095 r_h=-2.664 KL=1.374 H=5.230 pg=-0.030 vL=3.880 loss=+1.269 |g|=16.91
+  [β=0.1 W=48] it20: r_task=-0.095 r_h=-2.694 KL=1.290 H=5.298 pg=-0.029 vL=3.375 loss=+1.111 |g|=4.97
+  [β=0.1 W=48] it21: r_task=-0.090 r_h=-2.599 KL=1.344 H=5.048 pg=-0.026 vL=3.957 loss=+1.293 |g|=47.84
+  [β=0.1 W=48] it22: r_task=-0.048 r_h=-2.885 KL=1.334 H=5.318 pg=-0.027 vL=4.123 loss=+1.342 |g|=5.07
+  [β=0.1 W=48] it23: r_task=-0.045 r_h=-2.884 KL=1.297 H=5.316 pg=-0.032 vL=3.638 loss=+1.188 |g|=15.83
+  [β=0.1 W=48] it24: r_task=-0.087 r_h=-2.712 KL=1.250 H=5.157 pg=-0.031 vL=3.717 loss=+1.207 |g|=6.09
+  [β=0.1 W=48] it25: r_task=-0.086 r_h=-2.839 KL=1.264 H=5.196 pg=-0.029 vL=3.505 loss=+1.147 |g|=9.06
+  [β=0.1 W=48] it26: r_task=-0.075 r_h=-2.730 KL=1.286 H=5.199 pg=-0.031 vL=3.311 loss=+1.090 |g|=38.88
+  [β=0.1 W=48] it27: r_task=-0.037 r_h=-2.690 KL=1.269 H=5.201 pg=-0.028 vL=4.502 loss=+1.448 |g|=4.53
+  [β=0.1 W=48] it28: r_task=-0.100 r_h=-2.742 KL=1.262 H=5.116 pg=-0.031 vL=3.593 loss=+1.171 |g|=4.12
+  [β=0.1 W=48] it29: r_task=-0.074 r_h=-2.752 KL=1.238 H=5.108 pg=-0.031 vL=4.003 loss=+1.292 |g|=4.77
+  [β=0.1 W=48] it30: r_task=-0.062 r_h=-2.726 KL=1.219 H=5.109 pg=-0.027 vL=3.911 loss=+1.268 |g|=7.25
+  [β=0.1 W=48] it31: r_task=-0.062 r_h=-2.708 KL=1.210 H=5.111 pg=-0.032 vL=3.938 loss=+1.269 |g|=19.25
+  [β=0.1 W=48] it32: r_task=-0.033 r_h=-2.854 KL=1.204 H=5.242 pg=-0.029 vL=3.743 loss=+1.213 |g|=35.22
+  [β=0.1 W=48] it33: r_task=-0.035 r_h=-2.786 KL=1.206 H=5.234 pg=-0.023 vL=3.634 loss=+1.186 |g|=36.66
+  [β=0.1 W=48] it34: r_task=-0.060 r_h=-2.704 KL=1.191 H=5.150 pg=-0.027 vL=3.562 loss=+1.159 |g|=30.71
+  [β=0.1 W=48] it35: r_task=-0.042 r_h=-2.850 KL=1.148 H=5.207 pg=-0.025 vL=3.526 loss=+1.147 |g|=13.75
+  [β=0.1 W=48] it36: r_task=-0.076 r_h=-2.777 KL=1.209 H=5.105 pg=-0.027 vL=3.295 loss=+1.081 |g|=3.71
+  [β=0.1 W=48] it37: r_task=-0.059 r_h=-2.939 KL=1.208 H=5.242 pg=-0.025 vL=2.776 loss=+0.927 |g|=37.22
+  [β=0.1 W=48] it38: r_task=-0.055 r_h=-2.779 KL=1.142 H=5.080 pg=-0.026 vL=3.316 loss=+1.083 |g|=30.68
+  [β=0.1 W=48] it39: r_task=-0.069 r_h=-2.813 KL=1.150 H=5.164 pg=-0.024 vL=3.029 loss=+0.998 |g|=5.54
+  [β=0.1 W=48] it40: r_task=-0.089 r_h=-2.746 KL=1.113 H=5.032 pg=-0.030 vL=2.899 loss=+0.950 |g|=19.13
+  [β=0.1 W=48] it41: r_task=-0.048 r_h=-2.906 KL=1.109 H=5.254 pg=-0.028 vL=3.027 loss=+0.991 |g|=28.70
+  [β=0.1 W=48] it42: r_task=-0.024 r_h=-2.805 KL=1.104 H=5.166 pg=-0.024 vL=3.298 loss=+1.075 |g|=7.86
+  [β=0.1 W=48] it43: r_task=-0.046 r_h=-2.950 KL=1.109 H=5.264 pg=-0.023 vL=2.789 loss=+0.924 |g|=11.48
+  [β=0.1 W=48] it44: r_task=-0.036 r_h=-2.958 KL=1.080 H=5.335 pg=-0.020 vL=2.509 loss=+0.840 |g|=9.72
+  [β=0.1 W=48] it45: r_task=-0.051 r_h=-2.842 KL=1.059 H=5.182 pg=-0.027 vL=2.446 loss=+0.812 |g|=3.05
+  [β=0.1 W=48] it46: r_task=-0.057 r_h=-2.867 KL=1.077 H=5.046 pg=-0.022 vL=2.571 loss=+0.857 |g|=31.77
+  [β=0.1 W=48] it47: r_task=-0.057 r_h=-2.788 KL=1.050 H=5.318 pg=-0.027 vL=2.306 loss=+0.770 |g|=12.93
+  [β=0.1 W=48] it48: r_task=-0.041 r_h=-2.904 KL=1.053 H=5.309 pg=-0.023 vL=2.362 loss=+0.791 |g|=32.22
+  [β=0.1 W=48] it49: r_task=-0.052 r_h=-2.763 KL=1.114 H=5.376 pg=-0.027 vL=2.381 loss=+0.798 |g|=16.41
+  [ckpt] saved /spacer/checkpoints/ckpt_b0.1_W48_it000050.pt
