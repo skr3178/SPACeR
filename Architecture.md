@@ -155,9 +155,10 @@ input obs  [N, 2984]   (ego_state ‖ partner_obs(×63) ‖ road_map(×?))
 | **Total π_θ** | | **303,681** |
 | Paper-equivalent (same backbone + 200-token actor) | | 65,289 ≈ "~65 k" |
 
-**Hyperparameters (defaults):** `input_dim=64`, `hidden_dim=128`, `dropout=0.0`,
+**Hyperparameters:** `input_dim=64`, `hidden_dim=128`, `dropout=0.01`
+(paper A.3 — `NeuralNet`'s own default is 0.0, we override; Test 18 close),
 `act_func="tanh"`, `max_controlled_agents=64`, `obs_dim=2984`. Built from
-`NeuralNet(action_dim=2048, config={"reward_type":"weighted_combination", "vbd_in_obs":False})`.
+`NeuralNet(action_dim=2048, dropout=0.01, config={...})`.
 
 **Initialisation:** PufferLib `std=0.01` on the actor ⇒ near-uniform output at
 init (verified M2: init entropy = **7.625 ≈ ln 2048**; no degenerate collapse).
@@ -195,6 +196,61 @@ This is wired in `train_spacer.py` (`build_env`: `goal_achieved_weight=0`,
 | 3. Goal + KL | 0.73 | 4.08 | β, w_goal | only if minADE is target |
 | **4. KL + r_inf** ⭐ | **0.74** | 4.73 | β, w_coll, w_off | **DEFAULT** — Pareto best composite, fewest hyperparams |
 | 5. KL + r_inf + LLH | 0.74 | 4.68 | α, β, w_coll, w_off | tied composite; α not worth tuning |
+
+---
+
+## Algorithm 1 — as implemented
+
+> `algorithm.png` is the paper's screenshot of Algorithm 1. This is the
+> editable, code-mapped equivalent — what `spacer/train_spacer.py` actually
+> runs after the Test 18 PPO port. Variant 4 (α=0, w_goal=0).
+
+```
+Require: π_ref = clsft_E9 (frozen SMARTDecoder)              load_ref()
+Require: β (KL weight); w_coll = w_off = 0.75; α = 0         Variant 4
+ 1  init π_θ — late-fusion MLP, 2048-token actor + critic    TokenPolicy
+ 2  for each iteration (--iters):                            run() loop
+ 3-12  ROLLOUT — W parallel worlds (≤48, Test 17 ceiling);   rollout()
+        π_θ drives every agent from LOCAL ego obs; record
+        per (agent, token-step): obs, tok, logp, value,
+        logits, r_task
+ 13   π_ref scores the FULL rolled scene — one forward       score_ref()
+        pass → next_token_logits = p(a_t | a_<t, c)
+ 14   r_humanlike = log π_ref(a_t | a_<t, c)        [Eq.3]    anchor.r_humanlike
+        (logged only — α=0, not in the reward)
+ 15   r_task = −0.75·𝟙[collision] − 0.75·𝟙[off-road] [V4]    env weighted_combination
+ 16   r = r_task + α·r_h   (α=0 ⇒ r = r_task)       [Eq.1]
+ 17   D_KL = Σ_a π_θ(a|o) log(π_θ/π_ref)   [Eq.5, closed-form]
+ 21   advantages A[r] ← GAE(γ=0.99, λ=0.95)                  _gae()
+ 22   PPO UPDATE — 4 epochs × 16 minibatches:                spacer_iteration()
+        loss = −L_PPO(A) + β·D_KL                  [Eq.2]
+        L_PPO = clipped surrogate (clip 0.2)
+              + value loss (vf_coef 0.3)
+              + entropy bonus (ent_coef 1e-4)
+        grad-norm clip 0.5 ; Adam lr 3e-4 ; seed 42
+ 24  return π_θ
+```
+
+**Optimizer = the paper's PPO.** `L_PPO` is the GPUDrive PufferLib PPO
+(`gpudrive/integrations/puffer/ppo.py`) ported into `spacer_iteration`, with
+**all 13 algorithmic Table A3 hyperparameters matched verbatim** (γ, λ, clip,
+vf_coef, ent_coef, max_grad_norm, update_epochs, norm_adv, clip_vloss,
+vf_clip, lr, anneal_lr, seed). Pre-Test-18 this was a compact REINFORCE-style
+PG; it is now real PPO. The closed-form KL anchor (Eq. 5) is recomputed
+per-minibatch (π_θ moves each update; π_ref frozen) and added to the loss.
+
+**Deviations from the paper's Algorithm 1 — all scale, none algorithmic:**
+
+| Aspect | Paper | Ours | Reason |
+|---|---|---|---|
+| parallel worlds | 300 | ≤48 | RTX 3060 12 GB ceiling (Test 17) |
+| total env-steps | 1×10⁹ | `--iters`-bound (~2×10⁷ planned) | compute ceiling |
+| batch / minibatch | 131072 / 8192 | emergent / batch÷16 | scale-derived |
+| β | 0.01 | 0.1 | Test 13 — 0.01 degenerate at our budget; both in paper's robust band |
+| control cadence | 5 Hz | 2 Hz | `clsft_E9` native tokenisation |
+
+The SPACeR *algorithm* (Eqs. 1/2/3/5, PPO, Variant 4 reward) is faithfully
+reproduced; only **scale** differs — the documented 3060 ceiling.
 
 ---
 

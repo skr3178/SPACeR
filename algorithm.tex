@@ -1,0 +1,58 @@
+% SPACeR Training — Algorithm 1, as implemented in spacer/train_spacer.py
+% (post Test 18: PufferLib PPO port). Compile + render to algorithm.png:
+%   pdflatex algorithm.tex
+%   convert -density 220 algorithm.pdf -trim +repage -bordercolor white \
+%           -border 16 algorithm.png
+\documentclass[11pt]{article}
+\usepackage[margin=1cm,paperwidth=22cm,paperheight=27cm]{geometry}
+\usepackage{float}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{amsmath,amssymb}
+\pagestyle{empty}
+
+\newcommand{\pth}{\pi_{\theta}}
+\newcommand{\pref}{\pi_{\mathrm{ref}}}
+
+\begin{document}
+\begin{algorithm}[H]
+\DontPrintSemicolon
+\caption{SPACeR Training --- as implemented (\texttt{spacer/train\_spacer.py}, post Test~18)}
+\KwIn{frozen reference $\pref$ (CAT-K \texttt{clsft\_E9} SMARTDecoder, centralized, full-scene);\
+      KL weight $\beta=0.1$;\ infraction weights $w_{\mathrm{coll}}=w_{\mathrm{off}}=0.75$;\
+      $\alpha=0,\ w_{\mathrm{goal}}=0$ (Variant~4);\
+      PPO hyperparameters (paper Table~A3): $\gamma=0.99$, $\lambda=0.95$, clip $0.2$, $c_{\mathrm{vf}}=0.3$, $c_{\mathrm{ent}}=10^{-4}$, grad-clip $0.5$, $4$ epochs $\times$ $16$ minibatches, Adam lr $3\times10^{-4}$, seed $42$.}
+\KwOut{trained decentralized policy $\pth$}
+\BlankLine
+initialise $\pth$ --- late-fusion MLP: 2048-token actor $+$ critic \tcp*{\texttt{TokenPolicy}}
+\For{each training iteration}{
+  $\mathcal{B} \leftarrow \emptyset$ \tcp*{rollout buffer}
+  \For{each of $W$ parallel worlds $(W \le 48)$}{
+    reset simulator; observe state $s_0$ and scene context $c$\;
+    \For{token-step $t = 0,1,\dots,T$}{
+      \ForEach{agent $i$}{$a_{i,t} \sim \pth(\cdot \mid o_{i,t})$ \tcp*{local ego-centric obs}}
+      decode tokens $\rightarrow$ poses; step the simulator\;
+    }
+  }
+  $\pref(\cdot \mid s) \leftarrow$ one forward pass over the full rolled scene $\;=\; p(a_t \mid a_{<t},\, c)$ \tcp*{\texttt{score\_ref}}
+  \ForEach{(agent, token-step)}{
+    $r_{h} \leftarrow \log \pref(a_t \mid a_{<t},\, c)$ \tcp*{Eq.~3 \ (logged only; $\alpha=0$)}
+    $r_{\mathrm{task}} \leftarrow -0.75\cdot\mathbf{1}[\text{collision}] \;-\; 0.75\cdot\mathbf{1}[\text{off-road}]$ \tcp*{Eq.~1, Variant~4}
+    $D_{\mathrm{KL}} \leftarrow \sum_{a} \pth(a\mid o)\,\log\!\big(\pth(a\mid o)\,/\,\pref(a\mid s)\big)$ \tcp*{Eq.~5, closed-form}
+    store $\langle\, o,\ a,\ r_{\mathrm{task}},\ \text{value}\,\rangle$ in $\mathcal{B}$\;
+  }
+  $A[r] \leftarrow \mathrm{GAE}(\gamma,\lambda)$ over $\mathcal{B}$ \tcp*{advantages \quad \texttt{\_gae}}
+  \For{$4$ epochs $\times$ $16$ minibatches}{
+    $\mathcal{L}_{\mathrm{PPO}} \leftarrow$ clipped-surrogate $+\; c_{\mathrm{vf}}\cdot$value-loss $+\; c_{\mathrm{ent}}\cdot$entropy\;
+    $\mathcal{L}(\theta) \leftarrow -\,\mathcal{L}_{\mathrm{PPO}}(A[r]) \;+\; \beta\, D_{\mathrm{KL}}$ \tcp*{Eq.~2}
+    $\theta \leftarrow$ Adam step on $\nabla\mathcal{L}(\theta)$;\ grad-norm clip $0.5$\;
+  }
+}
+\Return $\pth$\;
+\end{algorithm}
+
+\vspace{6pt}
+\noindent\footnotesize\textit{Deviations from the paper's Algorithm~1 are scale-only, not algorithmic:}
+$W \le 48$ (vs.\ 300) $\cdot$ \texttt{-{}-iters}-bounded $\sim2\times10^{7}$ env-steps (vs.\ $10^{9}$) $\cdot$
+$\beta=0.1$ (vs.\ 0.01; both in the paper's robust band) $\cdot$ 2\,Hz control (vs.\ 5\,Hz).
+The algorithm itself --- Eqs.\ 1/2/3/5, PufferLib PPO, Variant~4 --- is faithfully reproduced.
+\end{document}

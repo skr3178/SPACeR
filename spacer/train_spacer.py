@@ -41,12 +41,15 @@ DEV = "cuda"
 SHIFT = 5                                  # 0.5 s token, 2 Hz (checkpoint-native)
 
 
-def build_env(n_scenes, n_worlds=1):
+def build_env(n_scenes, n_worlds=1, split="validation"):
     cfg = load_config("/gpd/examples/experimental/config/reliable_agents_params")
     # `n_worlds` parallel Madrona worlds; `n_scenes` ≥ `n_worlds` distinct scenes
     # cycled across env.reset() (paper runs 64+ worlds; here we let the caller
     # pick, default 1 for back-compat with the M5a–c single-world path).
-    loader = SceneDataLoader(root="/gpd/data/processed/validation",
+    # `split` selects the GPUDrive_mini folder: "training" (1000 scenes) for
+    # training, "validation" (150, held out) for eval. Default "validation"
+    # keeps pre-split callers/tests unchanged.
+    loader = SceneDataLoader(root=f"/gpd/data/processed/{split}",
                              batch_size=n_worlds,
                              dataset_size=max(n_worlds, n_scenes),
                              sample_with_replacement=False)
@@ -369,7 +372,7 @@ def load_ckpt(path, policy, opt):
 
 
 def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
-        ckpt_dir=None, ckpt_every=0, resume=None):
+        ckpt_dir=None, ckpt_every=0, resume=None, split="training"):
     """One training run; returns per-iter metrics.
 
     Variant 4 defaults (Table A2 best composite, paper-validated):
@@ -389,7 +392,7 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
                  against the current call; mismatch warns but does not abort.
     """
     torch.manual_seed(42)                       # Table A3: seed = 42
-    env, _ = build_env(scenes, n_worlds=n_worlds)
+    env, _ = build_env(scenes, n_worlds=n_worlds, split=split)
     obs0 = env.reset()
     odim = obs0[env.cont_agent_mask].shape[-1]
     policy = TokenPolicy(obs_dim=odim).to(DEV)
@@ -460,6 +463,11 @@ if __name__ == "__main__":
     ap.add_argument("--resume", default=None,
                     help="Path to a .pt checkpoint to resume from. Restores "
                     "policy weights, Adam state, iter index, and history.")
+    ap.add_argument("--split", default="training",
+                    choices=["training", "validation", "testing"],
+                    help="GPUDrive_mini split to train on. Default 'training' "
+                    "(1000 scenes); 'validation' (150) stays held out for "
+                    "eval_quick.py.")
     a = ap.parse_args()
 
     if a.mode == "smoke":                       # M5b faithful short run
@@ -468,7 +476,7 @@ if __name__ == "__main__":
               f"(exact per-agent KL, differentiable)")
         h, dw, dt = run(a.beta, a.iters, a.scenes, a.alpha, tag="",
                         n_worlds=a.worlds, ckpt_dir=a.ckpt_dir,
-                        ckpt_every=a.ckpt_every, resume=a.resume)
+                        ckpt_every=a.ckpt_every, resume=a.resume, split=a.split)
         fin = all(np.isfinite([h[-1]['loss'], h[-1]['kl'], h[-1]['r_h']]))
         print(f"params changed (mean|Δw|)={dw:.2e} | finite={fin} | "
               f"{dt:.1f}s ({a.iters/dt:.2f} it/s)")
@@ -481,7 +489,7 @@ if __name__ == "__main__":
         res = {}
         for b in (0.0, a.beta):
             h, dw, dt = run(b, a.iters, a.scenes, a.alpha,
-                            tag="ABL ", n_worlds=a.worlds)
+                            tag="ABL ", n_worlds=a.worlds, split=a.split)
             kl = np.array([x['kl'] for x in h]); rt = np.array([x['r_task'] for x in h])
             rh = np.array([x['r_h'] for x in h])
             res[b] = dict(kl_mean=kl.mean(), kl_last=kl[-3:].mean(),

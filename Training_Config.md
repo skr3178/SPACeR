@@ -145,16 +145,21 @@ closed-form KL anchor, Variant 4 reward design. These are matched.
    need full PPO wired in. Open decision: leave compact (the KL anchor — the
    contribution — is exact regardless) vs. invest in full-PPO fidelity.
 
-**Recommended config for the next real run** (corrected frame, post-Test 15):
+**Long-run config — LOCKED** (post Tests 15–18; ported PPO; corrected frame):
 
 | Knob | Value | Rationale |
 |---|---|---|
-| `--worlds` | 32 (or 64 if W-sweep confirms it fits) | 32 tested safe; 64 ≈2× samples/iter |
-| `--scenes` | 256 | well within the 1,000-scene pool; more per-run diversity than the 64 used in Tests 14/16 |
+| `--worlds` | **48** | Test 17 — safe ceiling (~1.8 GB headroom); W=64 is a knife-edge, unsafe for a 10 h run |
+| `--iters` | **3,500** | ✅ confirmed — ~10 h @ ~10 s/iter; reaches the Fig-A1 knee (~2×10⁷ env-steps; W=48 collects 1.5× more/iter than the W=32 budget table assumed, so 3.5k ≈ 5k @ W=32) |
+| `--ckpt-every` | **250** | ✅ confirmed — 14 checkpoints; ~42 min max crash-loss; doubles as the 14-point post-hoc eval/learning curve |
 | `--beta` | 0.1 | inside paper's robust band; Test 12/14/16 baseline. (0.01 = paper-canonical; needs paper-scale budget — see Test 13) |
-| `--iters` | ≥5,000 | ~11 h overnight; first reach into the slow-tail descent |
-| `--ckpt-every` | 250 | resume-safety; ~20 checkpoints |
-| launch | `docker exec -d` + `nohup` | survives session/terminal drop |
+| `--scenes` | **1,000** | ✅ `build_env` split fix done — `--split training` (1000 scenes); `validation/` (150) held out for eval_quick |
+| `--split` | **training** | trains on `training/`; eval stays on `validation/` (held out) |
+| launch | `docker exec -d` + `nohup` | survives session/terminal drop ([[nohup-training-launches]]) |
+
+Launch (gated only on the 200-iter validation run confirming the port):
+`train_spacer.py --mode smoke --iters 3500 --worlds 48 --scenes 1000
+--split training --beta 0.1 --ckpt-every 250 --ckpt-dir /spacer/checkpoints`
 
 ---
 
