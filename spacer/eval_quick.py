@@ -407,15 +407,20 @@ def main():
     ap.add_argument("--split", default="validation",
                     choices=["training", "validation", "testing"],
                     help="Dataset split to evaluate on (default: validation). "
-                    "Use 'training' to test for overfitting / data-coverage.")
+                    "Use 'training' to test for overfitting / data-coverage. "
+                    "Ignored when --data-root is given.")
+    ap.add_argument("--data-root", default=None,
+                    help="Explicit scene directory (overrides --split). For "
+                    "the new 941-scene set pass /data_new/validation.")
     ap.add_argument("--out", default=None,
                     help="Output JSON path. Default: "
                     "/spacer/eval_runs/<ckpt-stem>/quick_metrics.json")
     a = ap.parse_args()
 
     n_scenes = a.scene_batches * a.worlds
-    env, _ = build_env(n_scenes, n_worlds=a.worlds, split=a.split)
-    print(f"[eval_quick] split: {a.split}")
+    env, _ = build_env(n_scenes, n_worlds=a.worlds, split=a.split,
+                       data_root=a.data_root)
+    print(f"[eval_quick] split: {a.data_root or a.split}")
     obs0 = env.reset()
     odim = obs0[env.cont_agent_mask].shape[-1]
     tp, dec = load_ref()

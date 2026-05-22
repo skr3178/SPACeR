@@ -526,9 +526,12 @@ if __name__ == "__main__":
                     help="Explicit scene directory (overrides --split). For "
                     "the 10k dataset pass /data_new/training/group_0.")
     ap.add_argument("--inject-n", type=int, default=0,
-                    help="Paper-style partial scene injection: # of the W "
-                    "worlds refreshed with fresh scenes each cycle. 0 disables "
-                    "(legacy fixed-batch). Paper ratio ≈ 2/3·W.")
+                    help="Scene resampling: # of the W worlds refreshed with "
+                    "fresh scenes from the pool each cycle. 0 disables (legacy "
+                    "fixed-batch — the Test-20 bug). inject-n = W ⇒ full "
+                    "resample; < W ⇒ partial FIFO window. The paper resamples "
+                    "a 10k pool but gives no partial ratio, so W (full "
+                    "resample) is the faithful default.")
     ap.add_argument("--inject-every", type=int, default=1,
                     help="Inject every N iterations (default 1 = every "
                     "iteration, paper's 'every batch').")

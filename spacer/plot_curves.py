@@ -46,15 +46,22 @@ def mavg(y, w=25):
 
 
 # row 1 = paper Fig A1 trio ; row 2 = our PPO / Variant-4 diagnostics
+# (incl. the total optimised loss, Eq. 2). None ⇒ blank/hidden cell.
 panels = [("KL",     "D_KL(π_θ ‖ π_ref)        [Fig A1 — left]",     "tab:blue"),
           ("r_h",    "Log-Likelihood  log π_ref(aₜ)   [Fig A1 — mid]", "tab:purple"),
           ("H",      "Entropy  H(π_θ)          [Fig A1 — right]",    "tab:green"),
+          None,
+          ("loss",   "Total loss   L = −L_PPO + β·D_KL   [Eq. 2]",   "tab:cyan"),
           ("r_task", "r_task   [ours — Variant 4 reward, ≤0]",       "tab:red"),
           ("vL",     "PPO value loss   [ours]",                      "tab:orange"),
           ("g",      "grad-norm |g| pre-clip   [ours]",              "tab:gray")]
 
-fig, axes = plt.subplots(2, 3, figsize=(15, 8.4))
-for ax, (k, title, c) in zip(axes.flat, panels):
+fig, axes = plt.subplots(2, 4, figsize=(19, 8.4))
+for ax, p in zip(axes.flat, panels):
+    if p is None:
+        ax.set_visible(False)
+        continue
+    k, title, c = p
     y = data[k]
     ax.plot(its, y, color=c, lw=0.5, alpha=0.35)
     ax.plot(its, mavg(y), color=c, lw=1.9)
@@ -66,7 +73,7 @@ fig.suptitle(
     f"SPACeR long run — Variant 4 (KL + r_inf)   ·   "
     f"α = {ALPHA}   β = {beta}   ·   W = {world}   ·   {len(its)} iters\n"
     f"row 1 = paper Figure A1 panels   ·   row 2 = our PPO / Variant-4 "
-    f"diagnostics   (raw + 25-iter moving avg)", fontsize=11)
+    f"diagnostics incl. total loss   (raw + 25-iter moving avg)", fontsize=11)
 fig.tight_layout(rect=[0, 0, 1, 0.95])
 fig.savefig(out, dpi=110)
 print(f"wrote {out}  ({len(its)} iters, α={ALPHA} β={beta} W={world})")
