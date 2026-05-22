@@ -913,6 +913,12 @@ Driver: `spacer/world_sweep.py` + a per-W loop sampling `nvidia-smi`.
   ceiling** (no headroom — risky for long runs); **W=32** (our training
   config) is conservative, leaving ~2× throughput unused.
 
+> ⚠️ **Superseded for training runs.** This sweep used the **`validation/`
+> split** (150 lighter scenes). The `training/` split is heavier — on it
+> **W=48 OOMs**, W=32 leaves only ~0.7 GB, and the long run settled at
+> **W=24** (see Test 19 caveat). Treat these W=48/64 numbers as
+> validation-split only; the training-split ceiling is ~W≤24–32.
+
 **Files:** `spacer/world_sweep.py`.
 
 ---
@@ -947,10 +953,234 @@ safely by max_grad_norm 0.5; expected to settle at W≥32.
 
 **Caveats:** it is a faithful *port*, not literal GPUDrive code (their PPO is
 wired to GPUDrive's native policy — can't take our tokenised π_θ + adapter +
-KL). Not yet validated at scale — the 200-iter run is the verification gate.
+KL).
+
+**200-iter validation (W=48) completed: VERDICT OK** — but ⚠️ **take its
+memory behaviour with a grain of salt.** That run was on the **`validation/`
+split** (150 lighter scenes) and showed *no OOM at W=48*. It does **not**
+generalise: the real long run on the **`training/` split** (heavier scenes —
+more agents/map elements) **OOM'd at W=48**, then sat at only ~0.7 GB
+headroom at W=32, and was settled at **W=24**. So the validation run's
+"W=48 fine" is split-specific and over-optimistic — likewise Test 17's
+W-ceiling sweep, which was also run on `validation/`. **VRAM ceilings must be
+measured on the *training* split, not validation.** Lesson: a clean
+validation run is not evidence the same config survives a real training run.
 
 **Files:** `spacer/train_spacer.py` (`spacer_iteration` rewritten, `_gae` +
 `PPO_*` constants added).
+
+---
+
+## Test 19 — r_task bug: EnvConfig reward weights silently ignored  ✅ FIXED
+
+**Symptom.** The 200-iter PPO validation (Test 18) logged **positive** r_task
+in late iters (+0.02…+0.04) — impossible for Variant 4, whose
+`r_task = r_inf = −0.75·𝟙[collision] − 0.75·𝟙[off-road]` is a pure penalty
+(≤ 0). Tests 12–18 had r_task ≤ 0 only because their weaker policies rarely
+reached goals.
+
+### What was wrong, and the fix
+
+**The bug — `EnvConfig` reward weights were never read.**
+`GPUDriveTorchEnv.get_rewards()` defines the weights as **function arguments
+with defaults**:
+
+```python
+def get_rewards(self, collision_weight=-0.5, goal_achieved_weight=1.0,
+                off_road_weight=-0.5, ...):
+```
+
+It reads `self.config` only for the reward *type* — never for the weights.
+`rollout()` called it **bare**:
+
+```python
+# BEFORE — uses the function defaults: collision −0.5, goal +1.0, off-road −0.5
+env.get_rewards()[cmask]
+```
+
+So `build_env`'s `EnvConfig(goal_achieved_weight=0, collision_weight=-0.75,
+off_road_weight=-0.75)` was **dead code** — set, stored on `env.config`,
+never consulted by the reward path.
+
+**The fix — direct call with explicit named arguments**, sourced from
+`env.config` (the single source of truth):
+
+```python
+# AFTER
+env.get_rewards(
+    collision_weight     = env.config.collision_weight,    # −0.75
+    goal_achieved_weight = env.config.goal_achieved_weight, #  0.0
+    off_road_weight      = env.config.off_road_weight,      # −0.75
+)[cmask]
+```
+
+| | collision | goal | off-road |
+|---|---|---|---|
+| Was running (defaults) | −0.5 | **+1.0** | −0.5 |
+| Now (Variant 4, explicit) | −0.75 | **0.0** | −0.75 |
+
+**The post-fix weights match the paper by citation, not assumption:**
+- §A (p.~14, line 304): *"By default, we set w_collided = w_offroad = 0.75"*
+  → our `collision/off_road = −0.75` (penalty sign) is the paper's **stated
+  default**, not a project guess.
+- Table A2: Variant 4 = "KL + r_inf", *"goals unnecessary"* → `w_goal = 0`.
+- §A.5.1 reward-weight ablation sweeps `w_collided, w_offroad ∈
+  {0, −0.375, −0.75, +0.1}`, `w_goal ∈ {1.0, 0.5}` — −0.75 is in the grid
+  and is the default; the buggy `−0.5 / +1.0` values were off-grid for the
+  infraction variant entirely.
+
+**Confirmed empirically:** drive agents off-road → `env.get_rewards()` (bare)
+mean −0.30 vs `get_rewards(−0.75,0,−0.75)` mean −0.45 — `match=False`, ratio
+exactly 0.5/0.75. **Verified after fix** (W=8 smoke): r_task back to
+pure-penalty negative (−0.41, −0.34, −0.50), finite, VERDICT OK.
+
+### Why "goal reward ON" contradicts Variant 4 (KL + r_inf)
+
+Not just "wrong numbers" — it's a **different row of the paper's own Table A2
+ablation**:
+
+| Table A2 row | reward channels | composite |
+|---|---|---|
+| Goal + KL | goal + KL | 0.73 |
+| **KL + r_inf** ⬅ Variant 4 | infractions only + KL | **0.74** |
+
+`r_inf` = infraction penalties **only**, no goal term; the caption says
+*"goals unnecessary."* Running with `goal=+1.0` is not "Variant 4 with a
+tuning error" — it is the **"Goal + KL"** row. We claimed Variant 4 in
+plan.md / Architecture.md / Training_Config.md while running something else.
+
+**Three reasons the mismatch matters, not just bookkeeping:**
+
+1. **It changes what the policy optimizes.** Goal reward pays the policy for
+   reaching the *logged endpoint* — often an artifact (a parked car, an agent
+   entering mid-scene, a trip that just ended there). Chasing it pressures
+   arbitrary goal-seeking motion that can *hurt* realism. The paper's thesis:
+   KL anchoring to π_ref is a better route to human-likeness than chasing
+   endpoints — the goal channel is not just unnecessary, it's mild noise.
+2. **Pure-penalty vs mixed-sign objective.** Variant 4's `r_inf` is ≤ 0 — a
+   pure *safety* signal, nothing to chase. With `goal=+1.0` the reward is
+   **mixed-sign**: the policy can rationally *trade* a collision (−0.5) for a
+   goal (+1.0). A different optimization landscape; Variant 4 forbids that
+   trade by construction.
+3. **It breaks the role split.** In Variant 4, KL carries *realism* and
+   `r_inf` carries *safety* — clean separation, β the only knob. Goal reward
+   reintroduces a third, paper-redundant objective plus its weight as another
+   tunable — defeating Variant 4's "best composite, fewest knobs" point.
+
+### Consequences
+
+- **No prior run was actually Variant 4.** Tests 12–18 trained on
+  `−0.5·collision + 1.0·goal − 0.5·off-road` ≈ Table A2 "Goal + KL".
+- The positive r_task in Test 18 = the `+1.0·goal` term surfacing once PPO
+  made the policy good enough to reach goals.
+- Eval metrics (`collision_rate`, `off_road_rate`) are **unaffected** — they
+  read `Info` flags directly, not the reward. Only the *training signal* was
+  wrong.
+- The post-fix long run is the **first genuine Variant 4 run**.
+
+**Side finding (separate, minor):** a W=1 smoke NaN'd in the PPO update and
+core-dumped — degenerate ~7-sample minibatches under `norm_adv`. W=1-only;
+W=8 and W=48 fine. Smoke the PPO loop at W ≥ 8.
+
+**Files:** `spacer/train_spacer.py` (`rollout` — `get_rewards` call).
+
+---
+
+## Test 20 — first genuine Variant 4 long run + Phase-A eval  ⚠️ DEGENERATE OPTIMUM
+
+**Run.** `run_longrun_v4_W24` — Variant 4 (KL + r_inf), β=0.1, α=0, w_goal=0,
+W=24, training split (1000 scenes), PufferLib PPO (Table A3). First run after
+the Test 19 `r_task` fix ⇒ the first run that is *actually* Variant 4. Launched
+nohup-detached; stopped manually at it5840/6500 — every training curve had
+plateaued since it~150 (5,700 flat iterations, no further movement). Final
+checkpoint `ckpt_b0.1_W24_it005750.pt`.
+
+**Training curves** (`plot_curves.py` — 2×3: Fig A1 trio + our diagnostics):
+fast knee at it~150 then flat — D_KL 3→0.8, log π_ref −2.8→−1.85, entropy
+7.62 (=ln 2048, uniform init)→5.1, r_task −0.30→−0.04, value loss ~0.6, |g|
+clipped. Stable, no divergence — but converged almost immediately.
+
+**Phase-A eval** (`eval_quick.py` — 88 scenes, 528 rollouts/arm, 3 arms):
+
+| Metric | trained | random | ref | |
+|---|---|---|---|---|
+| collision ↓    | 0.040 | 0.181 | 0.050 | ✅ |
+| off-road ↓     | 0.059 | 0.555 | 0.236 | ✅ |
+| r_task ↓       | −0.032 | −0.358 | — | ✅ |
+| KL ↓           | 0.72 | 3.19 | — | ✅ |
+| goal_rate ↑    | 0.019 | 0.136 | 0.312 | ❌ |
+| minADE (m) ↓   | 24.97 | 21.17 | 4.45 | ❌ |
+| entropy        | 5.26 | 7.62 | 1.13 | — |
+| ade_completion ↑ | 0.993 | 0.620 | 0.724 | — |
+
+**Verdict — split result.**
+- ✅ *What it was trained for*: infraction avoidance. Collision 4.5× better than
+  random and better than the teacher; off-road 9× better than random, 4× better
+  than teacher; r_task 11× better; KL anchored. The Variant-4 RL loop optimizes
+  r_inf correctly.
+- ❌ *Driving quality*: **degenerate "safe-but-lost" optimum.** goal_rate 0.019 —
+  7× *below random*, 16× below teacher (unbiased metric — no gating). minADE
+  24.97 m vs teacher 4.45 m. ade_completion 0.993 ⇒ agents stay alive the full
+  8 s but wander ~25 m off the human trajectory.
+
+**Diagnosis.** V4's reward is infraction-avoidance only (−0.75/−0.75). The
+optimizer found the trivial high-scoring behaviour: stay on-road and
+collision-free while going nowhere near the goal. β=0.1 KL pinned the *token
+distribution* near π_ref (KL 0.72) but did **not** keep the *closed-loop
+trajectory* near human — per-token drift compounds over 80 steps into ~25 m.
+
+**Caveat.** minADE is gated to full-coverage rollouts; random completes only
+62% so its 21.17 m is over an easier surviving subset — do not over-read
+trained-vs-random minADE. The trained-vs-ref gap (25 vs 4.5 m) and goal_rate
+(ungated) are the unbiased evidence.
+
+**Why the gap vs the paper** (paper's V4 = Table A2 best composite 0.74):
+leading suspects — training horizon ~2×10⁷ vs paper 10⁹ env-steps (50×);
+token-level KL too weak to constrain the closed-loop trajectory; 2048-vs-~200
+token vocab; 39 k-param backbone capacity.
+
+**Bug fixed this test:** ref arm crashed `KeyError 'gt_z_raw'` in SMART
+`agent_decoder.inference()` — GPUDrive is 2D, the tokenizer drops height.
+Zero-filled `gt_z_raw` in `ref_rollout` (feeds only the unused WOSAC `pred_z`
+channel — xy metrics unaffected).
+
+**Files:** `spacer/eval_quick.py` (`ref_rollout` `gt_z_raw` fix),
+`spacer/plot_curves.py`, `ckpt_b0.1_W24_it005750.pt`,
+`eval_runs/ckpt_b0.1_W24_it005750/quick_metrics.json`.
+
+### Addendum — train-split control: dataset size exonerated
+
+**Hypothesis tested:** is the degenerate optimum caused by too few scenes
+(GPUDrive_mini training = 1,000 scenes, ~0.2% of full WOMD) — i.e. is the
+policy overfitting / memorizing? **Test:** re-ran Phase-A eval on the
+**training** split (the very scenes π_θ trained on) and compared to the Test 20
+validation result. A `--split` arg was added to `eval_quick.py` for this.
+
+| Metric (trained π_θ) | Validation | Training split | Gap |
+|---|---|---|---|
+| goal_rate ↑   | 0.0194 | 0.0205 | none |
+| minADE (m) ↓  | 24.97  | 26.74  | train *slightly worse* |
+| collision ↓   | 0.040  | 0.048  | none |
+| off-road ↓    | 0.059  | 0.044  | none |
+| r_task ↓      | −0.032 | −0.033 | none |
+| KL ↓          | 0.72   | 0.78   | none |
+| entropy       | 5.26   | 5.22   | none |
+
+**Result — zero train-vs-val gap.** The model is no better on scenes it
+trained on than on held-out scenes (minADE is even slightly *worse* on
+training data; goal_rate identically degenerate at ~0.02 on both).
+
+**Conclusion: dataset size is NOT the cause.** An overfitting / memorization
+failure would show a large train≫val gap — there is none. The degenerate
+"safe-but-lost" optimum is **intrinsic to the Variant-4 reward configuration**,
+not a data-volume artifact: the policy generalizes its trivial behaviour
+("drive safe, ignore the goal") perfectly *because* that behaviour is simple
+and scene-independent. More scenes would not change this. The real lever is
+the **closed-loop weakness of the KL anchor** (token-level KL pinned ~0.78 yet
+trajectories drift ~26 m), not the training set.
+
+**Files:** `spacer/eval_quick.py` (`--split` arg),
+`eval_runs/ckpt_b0.1_W24_it005750/quick_metrics_trainsplit.json`.
 
 ---
 
@@ -973,7 +1203,9 @@ KL). Not yet validated at scale — the 200-iter run is the verification gate.
 | **Coordinate-frame bug** (rollout ran in global, sim is local) | ✅ **Test 15 — FIXED**: `extract_gpudrive_scene` no longer `restore_mean`s; t10 drift 5730 m → 7 m; off-road detection revived (0 → 6); adapter NLL unchanged. Tests 12–14 / `it200` were broken-frame ⇒ re-train. |
 | **Corrected-frame training + Phase-A eval** | ✅ **Test 16** — re-trained W=32 in the fixed frame; eval shows trained ≫ random: collision 0.095 vs 0.186, off-road 0.298 vs 0.532, completion 0.95 vs 0.67. First physically-meaningful result; vs-paper table included (direction/sanity, not parity). |
 | **World-count ceiling** (3060 12 GB) | ✅ **Test 17** — max trainable W=64 (marginal, ~0.4 GB free); W=48 safe practical max; W=80 OOMs. |
-| **PPO port + Table A3 alignment** | ✅ **Test 18** — compact PG replaced with the paper's PufferLib PPO; 13 algorithmic hyperparams matched verbatim; smoke passes; 200-iter validation pending. |
+| **PPO port + Table A3 alignment** | ✅ **Test 18** — compact PG replaced with the paper's PufferLib PPO; 13 algorithmic hyperparams matched verbatim; smoke passes; 200-iter validation OK. |
+| **r_task reward-weight bug** | ✅ **Test 19 — FIXED**: `get_rewards()` took weights as kwarg-defaults (−0.5/+1.0/−0.5), ignored `EnvConfig`. Tests 12–18 ran goal-reward-ON (≈ "Goal + KL"), not Variant 4. `rollout()` now passes `env.config` weights ⇒ first genuine Variant 4 run is the post-fix long run. |
+| **Genuine Variant 4 long run + Phase-A eval** | ⚠️ **Test 20** — V4 loop optimizes r_inf (collision/off-road ≪ random, ≤ teacher) but converges to a **degenerate safe-but-lost policy**: goal_rate 0.019 (< random 0.136), minADE 25 m vs teacher 4.5 m. Pipeline correct; reward config + scale insufficient for good driving. Train-split control (addendum) shows **zero train-vs-val gap ⇒ dataset size exonerated**; cause is the reward/KL-anchor, not data. |
 | Convergent paper-scale run | ✗ out of reach on 3060 (documented ceiling) |
 
 **The entire SPACeR mechanism is implemented, numerically exact, and

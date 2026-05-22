@@ -1,0 +1,43 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-22 04:45:41.905331: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-22 04:45:41.912907: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779425141.921527    3419 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779425141.924148    3419 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779425141.931747    3419 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779425141.931757    3419 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779425141.931760    3419 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779425141.931761    3419 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-22 04:45:41.933999: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Initialization finished
+[eval_quick] env: W=8 scene-batches=12 rollouts/scene=6 obs_dim=2984
+[eval_quick] total scenes=96 total rollouts/arm=576
+[eval_quick] trained ckpt: /spacer/checkpoints/ckpt_b0.1_W24_it005750.pt (it=5750)
+[eval_quick] ref arm ON — π_ref (clsft_E9) closed-loop
+Traceback (most recent call last):
+  File "/spacer/eval_quick.py", line 520, in <module>
+    main()
+  File "/spacer/eval_quick.py", line 450, in main
+    eval_batch_ref(env, tp, dec, gt_scenes, a.rollouts))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/spacer/eval_quick.py", line 344, in eval_batch_ref
+    s_live, rh_k, ent_k = ref_rollout(env, tp, dec)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/spacer/eval_quick.py", line 283, in ref_rollout
+    pi = dec.inference(tmap, tag, REF_SAMPLING)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/catk/src/smart/modules/smart_decoder.py", line 84, in inference
+    pred_dict = self.agent_encoder.inference(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/catk/src/smart/modules/agent_decoder.py", line 743, in inference
+    pred_z = tokenized_agent["gt_z_raw"].unsqueeze(1)  # [n_agent, 1]
+             ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'gt_z_raw'

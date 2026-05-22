@@ -39,7 +39,7 @@ GIF / PNG panel mapping:
 ║        │ states + chosen tokens  │  this is "Panel C" in the GIF  ║
 ║        │                         │                                ║
 ║        │ r_task                  │ scene + per-step states        ║
-║        │ goal/collide/off-road   ▼                                ║
+║        │ collide / off-road      ▼                                ║
 ║        │                ┌────────────────────────┐                ║
 ║        │                │  π_ref forward — ONE   │                ║
 ║        │                │  pass over rollout,    │                ║
@@ -50,7 +50,7 @@ GIF / PNG panel mapping:
 ║        │                  ┌────────┴────────┐                     ║
 ║        │                  ▼                 ▼                     ║
 ║        │       r_h = log π_ref(a_C|s)   KL(π_θ ‖ π_ref)           ║
-║        │       (Eq. 3, dense reward)    (Eq. 5, closed-form)      ║
+║        │       (Eq. 3 — α=0, logged)    (Eq. 5, closed-form)      ║
 ║        │                  │                 │                     ║
 ║        ▼                  ▼                 ▼                     ║
 ║   ┌──────────────────────────────────────────────────┐            ║
@@ -105,13 +105,16 @@ GIF / PNG panel mapping:
 | **GPUDrive** | physics/sim engine (environment) | installed package `/gpudrive/` in the image | — |
 | **π_θ** | trainable policy (online PPO target) | `policy_token.TokenPolicy` (late-fusion MLP, 2048-token actor head) | **303,681** (≈304 k)* |
 | **π_ref** | frozen human-likeness prior | `clsft_E9.ckpt` → `SMARTDecoder` | ~7 M |
-| `policy_S10_000_02_27` | unused here; baseline / optional warm-start | GPUDrive repo's checkpointed self-play policy | ~65 k (91-action head) |
+| `policy_S10_000_02_27` | unused here; GPUDrive baseline only — we do **not** warm-start (SPACeR is RL-first; π_θ is random-init) | GPUDrive repo's checkpointed self-play policy | ~65 k (91-action head) |
 
-\* Paper's π_θ is **~65 k** with a 200-token actor head. Our backbone is
-**byte-identical** (39,360 params); the 5× delta is entirely the wider actor
-head (`Linear(128, 2048)` = 264,192 params) — the locked consequence of using
-public `clsft_E9` (vocab 2048). See § *π_θ architecture (detailed)* below and
-`STAGE_PLAN.md` S2.6 for the optional vocab-coarsening path.
+\* Paper-equivalent π_θ is **~65 k** (same backbone + ~200-token actor head).
+Our backbone is **byte-identical** (39,360 params); the **~4.7× delta**
+(303,681 vs 65,289) is *entirely* the wider actor head (`Linear(128, 2048)` =
+264,192 params vs ~25,800) — the locked consequence of anchoring to public
+`clsft_E9` (vocab 2048) so the closed-form KL is token-aligned. The trainable
+*backbone* — the part that encodes the scene — matches the paper exactly.
+See § *π_θ architecture (detailed)* below and `STAGE_PLAN.md` S2.6 for the
+optional vocab-coarsening path.
 
 ## π_θ architecture (detailed)
 
@@ -134,7 +137,7 @@ input obs  [N, 2984]   (ego_state ‖ partner_obs(×63) ‖ road_map(×?))
                                                 ▼
                                        [N, 192]   (= 3 × 64)
                                                 │
-                            shared_embed  Linear(192 → 128) → tanh → Dropout(0)
+                            shared_embed  Linear(192 → 128) → tanh → Dropout(0.01)
                                                 │
                                                 ▼
                                           hidden  [N, 128]
@@ -244,13 +247,25 @@ per-minibatch (π_θ moves each update; π_ref frozen) and added to the loss.
 | Aspect | Paper | Ours | Reason |
 |---|---|---|---|
 | parallel worlds | 300 | ≤48 | RTX 3060 12 GB ceiling (Test 17) |
-| total env-steps | 1×10⁹ | `--iters`-bound (~2×10⁷ planned) | compute ceiling |
+| total env-steps | 1×10⁹ | `--iters`-bound (~2×10⁷; Test 20 ran 5840 it) | compute ceiling |
 | batch / minibatch | 131072 / 8192 | emergent / batch÷16 | scale-derived |
 | β | 0.01 | 0.1 | Test 13 — 0.01 degenerate at our budget; both in paper's robust band |
 | control cadence | 5 Hz | 2 Hz | `clsft_E9` native tokenisation |
 
 The SPACeR *algorithm* (Eqs. 1/2/3/5, PPO, Variant 4 reward) is faithfully
 reproduced; only **scale** differs — the documented 3060 ceiling.
+
+### Pipeline status — has been run end-to-end
+
+The full loop has been executed (`test.md` **Test 20**) — the first *genuine*
+Variant 4 run after the Test 19 `r_task` fix: `ckpt_b0.1_W24_it005750`.
+**Result is a split one:** the V4 loss optimizes r_inf correctly (closed-loop
+collision/off-road far below a random policy, on par with the teacher) **but
+converges to a degenerate "safe-but-lost" optimum** — goal_rate 0.019, minADE
+≈ 25 m vs the teacher's 4.5 m. The architecture and equations are faithful;
+the open question is the *closed-loop* strength of the KL anchor (token-level
+KL is anchored at ≈0.7 yet trajectories still drift), not the wiring. See
+Test 20 for the full 3-arm eval table and diagnosis.
 
 ---
 

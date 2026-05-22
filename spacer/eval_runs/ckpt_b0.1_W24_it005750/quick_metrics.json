@@ -1,0 +1,65 @@
+{
+  "ckpt": "/spacer/checkpoints/ckpt_b0.1_W24_it005750.pt",
+  "config": {
+    "scene_batches": 11,
+    "worlds": 8,
+    "rollouts_per_scene": 6,
+    "dynamics": "state",
+    "collision_behavior": "stop",
+    "variant": "V4 (KL + r_inf)"
+  },
+  "arms": {
+    "trained": {
+      "collision_rate": 0.039857236188695286,
+      "off_road_rate": 0.05915321818919795,
+      "goal_rate": 0.019395863693771942,
+      "r_task_mean": -0.031834939501784516,
+      "min_ade_m": 24.972855036951614,
+      "ade_completion_rate": 0.9932105374689105,
+      "r_h_mean": -2.776766386899081,
+      "kl_mean": 0.719568279656497,
+      "entropy_mean": 5.257272676988081,
+      "wall_time_s": 280.3711669445038,
+      "throughput_scenarios_per_s": 1.8832178991661845,
+      "n_scenes": 88,
+      "n_rollouts": 528,
+      "ckpt_it": 5750,
+      "ckpt_meta": {
+        "beta": 0.1,
+        "alpha": 0.0,
+        "n_worlds": 24,
+        "lr": 0.0003
+      }
+    },
+    "random": {
+      "collision_rate": 0.18054624663835223,
+      "off_road_rate": 0.5552330694415353,
+      "goal_rate": 0.13637151800547584,
+      "r_task_mean": -0.35797795992005954,
+      "min_ade_m": 21.17218043544158,
+      "ade_completion_rate": 0.6199100164411168,
+      "r_h_mean": -2.3588010397824375,
+      "kl_mean": 3.186139150099321,
+      "entropy_mean": 7.624618313529274,
+      "wall_time_s": 266.3022496700287,
+      "throughput_scenarios_per_s": 1.9827094989029843,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    },
+    "ref": {
+      "collision_rate": 0.050376852409857696,
+      "off_road_rate": 0.2360727514958743,
+      "goal_rate": 0.31170342614253366,
+      "r_task_mean": NaN,
+      "min_ade_m": 4.453502895304879,
+      "ade_completion_rate": 0.7235747528211643,
+      "r_h_mean": -1.3851189324350068,
+      "kl_mean": NaN,
+      "entropy_mean": 1.1314234589085435,
+      "wall_time_s": 348.42758536338806,
+      "throughput_scenarios_per_s": 1.5153794423289684,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    }
+  }
+}

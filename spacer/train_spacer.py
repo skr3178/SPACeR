@@ -18,7 +18,7 @@ import os
 # Must be set before torch is imported. PyTorch's recommended fix for the same
 # OOM message we observed at W=64 without it (~647 MB reserved-but-unallocated).
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-import sys, time, dataclasses, math, torch
+import sys, time, dataclasses, math, random, torch
 sys.path.insert(0, "/catk"); sys.path.insert(0, "/spacer")
 from omegaconf import OmegaConf
 from torch_geometric.data import Batch
@@ -41,7 +41,7 @@ DEV = "cuda"
 SHIFT = 5                                  # 0.5 s token, 2 Hz (checkpoint-native)
 
 
-def build_env(n_scenes, n_worlds=1, split="validation"):
+def build_env(n_scenes, n_worlds=1, split="validation", data_root=None):
     cfg = load_config("/gpd/examples/experimental/config/reliable_agents_params")
     # `n_worlds` parallel Madrona worlds; `n_scenes` ≥ `n_worlds` distinct scenes
     # cycled across env.reset() (paper runs 64+ worlds; here we let the caller
@@ -49,7 +49,11 @@ def build_env(n_scenes, n_worlds=1, split="validation"):
     # `split` selects the GPUDrive_mini folder: "training" (1000 scenes) for
     # training, "validation" (150, held out) for eval. Default "validation"
     # keeps pre-split callers/tests unchanged.
-    loader = SceneDataLoader(root=f"/gpd/data/processed/{split}",
+    # `data_root`: explicit scene directory (overrides `split`). Used for the
+    # new 10k dataset — pass e.g. /data_new/training/group_0 (the dir holding
+    # the tfrecord-*.json files directly). None ⇒ legacy GPUDrive_mini path.
+    root = data_root if data_root else f"/gpd/data/processed/{split}"
+    loader = SceneDataLoader(root=root,
                              batch_size=n_worlds,
                              dataset_size=max(n_worlds, n_scenes),
                              sample_with_replacement=False)
@@ -69,6 +73,29 @@ def build_env(n_scenes, n_worlds=1, split="validation"):
     env = GPUDriveTorchEnv(config=ec, data_loader=loader,
                            max_cont_agents=cfg.max_controlled_agents, device=DEV)
     return env, cfg
+
+
+def _scene_pool(root, size):
+    """The fixed, deterministic scene pool: first `size` tfrecord files in
+    `root`, sorted — matches SceneDataLoader's own selection so the injection
+    pool is consistent with the env's initial batch."""
+    files = sorted(f for f in os.listdir(root) if f.startswith("tfrecord"))
+    return [os.path.join(root, f) for f in files[:size]]
+
+
+def inject_scenes(env, pool, n_inject, rng):
+    """Paper-style partial scene injection. Drops the oldest `n_inject` of the
+    W worlds, draws `n_inject` fresh scenes from `pool`, and swaps the W-world
+    batch in place (FIFO sliding window). Follows GPUDrive's resample pattern
+    (env_puffer.resample_scenario_batch): swap_data_batch reinitialises the sim
+    maps + cont_agent_mask; the caller's next env.reset() resets sim state."""
+    cur = list(env.data_batch)                       # current W scene paths
+    W = len(cur)
+    n = max(0, min(n_inject, W))
+    if n == 0:
+        return
+    fresh = [rng.choice(pool) for _ in range(n)]
+    env.swap_data_batch(cur[n:] + fresh)             # retained (W−n) + fresh
 
 
 def load_ref():
@@ -169,7 +196,14 @@ def rollout(env, policy):
         for _ in range(SHIFT):
             set_state(env, dpos_per_w, dhead_per_w)
         prev_pos, prev_head = dpos_per_w, dhead_per_w
-        rec["rtask"].append(env.get_rewards()[cmask].detach())
+        # NOTE: env.get_rewards() takes weights as ARGS (defaults −0.5/+1.0/
+        # −0.5) — it does NOT read EnvConfig. Passing the EnvConfig weights
+        # explicitly is what actually applies Variant 4 (w_goal=0, ±0.75);
+        # calling it bare silently trained on goal-reward-ON. (Test 19.)
+        rec["rtask"].append(env.get_rewards(
+            collision_weight=env.config.collision_weight,
+            goal_achieved_weight=env.config.goal_achieved_weight,
+            off_road_weight=env.config.off_road_weight)[cmask].detach())
         obs = env.get_obs()
     # rolled trajectories for π_ref (one s_live dict per world)
     s_live_per_w = []
@@ -372,7 +406,8 @@ def load_ckpt(path, policy, opt):
 
 
 def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
-        ckpt_dir=None, ckpt_every=0, resume=None, split="training"):
+        ckpt_dir=None, ckpt_every=0, resume=None, split="training",
+        data_root=None, inject_n=0, inject_every=1):
     """One training run; returns per-iter metrics.
 
     Variant 4 defaults (Table A2 best composite, paper-validated):
@@ -390,9 +425,16 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
     resume     : path to a checkpoint to load before training starts. The
                  (β, α, n_worlds) in the ckpt's meta are sanity-checked
                  against the current call; mismatch warns but does not abort.
+    data_root  : explicit scene directory (overrides `split`) — for the 10k
+                 dataset, e.g. /data_new/training/group_0.
+    inject_n   : paper-style scene injection — # of the W worlds refreshed with
+                 fresh scenes each cycle. 0 ⇒ disabled (legacy fixed-batch).
+    inject_every : inject every N iterations (1 = every iter, paper's
+                 "every batch").
     """
     torch.manual_seed(42)                       # Table A3: seed = 42
-    env, _ = build_env(scenes, n_worlds=n_worlds, split=split)
+    env, _ = build_env(scenes, n_worlds=n_worlds, split=split,
+                       data_root=data_root)
     obs0 = env.reset()
     odim = obs0[env.cont_agent_mask].shape[-1]
     policy = TokenPolicy(obs_dim=odim).to(DEV)
@@ -413,8 +455,20 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
         print(f"  [resume] loaded {resume} → resuming at it{start_it}, "
               f"{len(hist)} prior metrics")
     w0 = torch.cat([p.flatten() for p in policy.parameters()]).clone()
+    # paper-style partial scene injection (FIFO sliding window over a fixed pool)
+    pool, inj_rng = None, None
+    if inject_n > 0:
+        root = data_root if data_root else f"/gpd/data/processed/{split}"
+        pool = _scene_pool(root, scenes)
+        inj_rng = random.Random(42)
+        print(f"  [inject] scene injection ON: {inject_n}/{n_worlds} worlds "
+              f"refreshed every {inject_every} iter(s); pool={len(pool)} "
+              f"scenes ({root})")
     t0 = time.time()
     for it in range(start_it, iters):
+        if (inject_n > 0 and it > start_it
+                and (it - start_it) % inject_every == 0):
+            inject_scenes(env, pool, inject_n, inj_rng)
         m = spacer_iteration(env, policy, opt, tp, dec, alpha, beta)
         hist.append(m)
         print(f"  [{tag}β={beta} W={n_worlds}] it{it:02d}: "
@@ -467,7 +521,17 @@ if __name__ == "__main__":
                     choices=["training", "validation", "testing"],
                     help="GPUDrive_mini split to train on. Default 'training' "
                     "(1000 scenes); 'validation' (150) stays held out for "
-                    "eval_quick.py.")
+                    "eval_quick.py. Ignored when --data-root is given.")
+    ap.add_argument("--data-root", default=None,
+                    help="Explicit scene directory (overrides --split). For "
+                    "the 10k dataset pass /data_new/training/group_0.")
+    ap.add_argument("--inject-n", type=int, default=0,
+                    help="Paper-style partial scene injection: # of the W "
+                    "worlds refreshed with fresh scenes each cycle. 0 disables "
+                    "(legacy fixed-batch). Paper ratio ≈ 2/3·W.")
+    ap.add_argument("--inject-every", type=int, default=1,
+                    help="Inject every N iterations (default 1 = every "
+                    "iteration, paper's 'every batch').")
     a = ap.parse_args()
 
     if a.mode == "smoke":                       # M5b faithful short run
@@ -476,7 +540,9 @@ if __name__ == "__main__":
               f"(exact per-agent KL, differentiable)")
         h, dw, dt = run(a.beta, a.iters, a.scenes, a.alpha, tag="",
                         n_worlds=a.worlds, ckpt_dir=a.ckpt_dir,
-                        ckpt_every=a.ckpt_every, resume=a.resume, split=a.split)
+                        ckpt_every=a.ckpt_every, resume=a.resume, split=a.split,
+                        data_root=a.data_root, inject_n=a.inject_n,
+                        inject_every=a.inject_every)
         fin = all(np.isfinite([h[-1]['loss'], h[-1]['kl'], h[-1]['r_h']]))
         print(f"params changed (mean|Δw|)={dw:.2e} | finite={fin} | "
               f"{dt:.1f}s ({a.iters/dt:.2f} it/s)")

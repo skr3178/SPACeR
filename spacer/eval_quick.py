@@ -270,6 +270,11 @@ def ref_rollout(env, tp, dec):
         b = Batch.from_data_list([scene_dict_to_heterodata(scenes0[w], f"ref_{w}")])
         tmap, tag = tp(b)
         tmap, tag = to_dev(tmap), to_dev(tag)
+        # GPUDrive scenes are 2D — our tokenizer drops height, but SMART's
+        # inference path reads gt_z_raw only to assemble pred_z_10hz (the WOSAC
+        # height channel, unused by our xy-based metrics). Zero-fill it.
+        if "gt_z_raw" not in tag:
+            tag["gt_z_raw"] = torch.zeros(tag["gt_pos_raw"].shape[0], device=DEV)
         # teacher-forced forward → r_h (= log π_ref of GT) + entropy
         ptf = dec(tmap, tag)
         nvalid = ptf["next_token_valid"].bool()
@@ -399,13 +404,18 @@ def main():
     ap.add_argument("--ref-arm", action="store_true",
                     help="Also evaluate π_ref (CAT-K clsft_E9) closed-loop "
                     "as a third arm (Phase A.5 reference baseline).")
+    ap.add_argument("--split", default="validation",
+                    choices=["training", "validation", "testing"],
+                    help="Dataset split to evaluate on (default: validation). "
+                    "Use 'training' to test for overfitting / data-coverage.")
     ap.add_argument("--out", default=None,
                     help="Output JSON path. Default: "
                     "/spacer/eval_runs/<ckpt-stem>/quick_metrics.json")
     a = ap.parse_args()
 
     n_scenes = a.scene_batches * a.worlds
-    env, _ = build_env(n_scenes, n_worlds=a.worlds)
+    env, _ = build_env(n_scenes, n_worlds=a.worlds, split=a.split)
+    print(f"[eval_quick] split: {a.split}")
     obs0 = env.reset()
     odim = obs0[env.cont_agent_mask].shape[-1]
     tp, dec = load_ref()

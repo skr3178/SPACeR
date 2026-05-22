@@ -1,0 +1,65 @@
+{
+  "ckpt": "/spacer/checkpoints/ckpt_b0.1_W24_it005750.pt",
+  "config": {
+    "scene_batches": 11,
+    "worlds": 8,
+    "rollouts_per_scene": 6,
+    "dynamics": "state",
+    "collision_behavior": "stop",
+    "variant": "V4 (KL + r_inf)"
+  },
+  "arms": {
+    "trained": {
+      "collision_rate": 0.04751298043199561,
+      "off_road_rate": 0.043719866101376036,
+      "goal_rate": 0.02053221028693246,
+      "r_task_mean": -0.03293949362793656,
+      "min_ade_m": 26.738884143986777,
+      "ade_completion_rate": 0.9852654262256234,
+      "r_h_mean": -2.587453246116638,
+      "kl_mean": 0.7816845124418085,
+      "entropy_mean": 5.2227819616144355,
+      "wall_time_s": 287.2258036136627,
+      "throughput_scenarios_per_s": 1.8382749507777307,
+      "n_scenes": 88,
+      "n_rollouts": 528,
+      "ckpt_it": 5750,
+      "ckpt_meta": {
+        "beta": 0.1,
+        "alpha": 0.0,
+        "n_worlds": 24,
+        "lr": 0.0003
+      }
+    },
+    "random": {
+      "collision_rate": 0.22963505667267417,
+      "off_road_rate": 0.5528717149387706,
+      "goal_rate": 0.1180277868653789,
+      "r_task_mean": -0.38873290518919623,
+      "min_ade_m": 20.974451877956138,
+      "ade_completion_rate": 0.6281751969776883,
+      "r_h_mean": -2.1739113981073555,
+      "kl_mean": 3.3292794227600098,
+      "entropy_mean": 7.624618140133944,
+      "wall_time_s": 281.1110670566559,
+      "throughput_scenarios_per_s": 1.8782611639177673,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    },
+    "ref": {
+      "collision_rate": 0.08913871962012666,
+      "off_road_rate": 0.24510296468030324,
+      "goal_rate": 0.26606499110207416,
+      "r_task_mean": NaN,
+      "min_ade_m": 4.13834182528651,
+      "ade_completion_rate": 0.7321795283207618,
+      "r_h_mean": -1.4871031569712088,
+      "kl_mean": NaN,
+      "entropy_mean": 1.1637153932542512,
+      "wall_time_s": 367.800240278244,
+      "throughput_scenarios_per_s": 1.43556186804164,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    }
+  }
+}

@@ -1,0 +1,49 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-22 05:12:55.991977: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-22 05:12:55.999385: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779426776.007794    3518 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779426776.010332    3518 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779426776.017800    3518 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779426776.017811    3518 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779426776.017814    3518 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779426776.017816    3518 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-22 05:12:56.019965: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Initialization finished
+[eval_quick] env: W=8 scene-batches=12 rollouts/scene=6 obs_dim=2984
+[eval_quick] total scenes=96 total rollouts/arm=576
+[eval_quick] trained ckpt: /spacer/checkpoints/ckpt_b0.1_W24_it005750.pt (it=5750)
+[eval_quick] ref arm ON — π_ref (clsft_E9) closed-loop
+[eval_quick] batch 1/12 done
+[eval_quick] batch 2/12 done
+[eval_quick] batch 3/12 done
+[eval_quick] batch 4/12 done
+[eval_quick] batch 5/12 done
+[eval_quick] batch 6/12 done
+[eval_quick] batch 7/12 done
+[eval_quick] batch 8/12 done
+[eval_quick] batch 9/12 done
+[eval_quick] batch 10/12 done
+[eval_quick] batch 11/12 done
+[eval_quick] data loader exhausted after 11 batches — stopping early
+[eval_quick] wrote /spacer/eval_runs/ckpt_b0.1_W24_it005750/quick_metrics.json
+
+--- summary  (↓ coll/off/r_task/minADE   ↑ goal/r_h/entropy/thru/compl) ---
+metric                            trained       random          ref      Δ (t-r)
+--------------------------------------------------------------------------------
+collision_rate                     0.0399       0.1805       0.0504      -0.1407
+off_road_rate                      0.0592       0.5552       0.2361      -0.4961
+goal_rate                          0.0194       0.1364       0.3117      -0.1170
+min_ade_m                         24.9729      21.1722       4.4535      +3.8007
+ade_completion_rate                0.9932       0.6199       0.7236      +0.3733
+r_task_mean                       -0.0318      -0.3580          nan      +0.3261
+r_h_mean                          -2.7768      -2.3588      -1.3851      -0.4180
+kl_mean                            0.7196       3.1861          nan      -2.4666
+entropy_mean                       5.2573       7.6246       1.1314      -2.3673
+throughput_scenarios_per_s         1.8832       1.9827       1.5154      -0.0995
+wall_time_s                      280.3712     266.3022     348.4276     +14.0689
