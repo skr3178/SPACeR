@@ -69,7 +69,12 @@ def build_env(n_scenes, n_worlds=1, split="validation", data_root=None):
         reward_type="weighted_combination",
         goal_achieved_weight=0.0,
         collision_weight=-0.75,
-        off_road_weight=-0.75)
+        off_road_weight=-0.75,
+        # Paper §A.3 trick: cap road-graph context per agent at 120 (default
+        # 200) to fit reference-model training in VRAM. Shrinks obs_dim
+        # (input side) and Madrona's per-agent road state — both reduce VRAM
+        # pressure during the PPO update.
+        roadgraph_top_k=120)
     env = GPUDriveTorchEnv(config=ec, data_loader=loader,
                            max_cont_agents=cfg.max_controlled_agents, device=DEV)
     return env, cfg
@@ -275,10 +280,13 @@ def _gae(rew, val, gamma, lam):
     return adv, adv + val
 
 
-def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
-    """One SPACeR training iteration: self-play rollout → π_ref scoring →
-    **PPO update** (GPUDrive PufferLib PPO, Table A3) with the closed-form
-    KL anchor (Eq. 5) added to the loss (Eq. 2)."""
+def _collect(env, policy, tp, dec):
+    """One micro-rollout: self-play rollout → π_ref scoring → flatten to a
+    per-sample CPU buffer + scalar metrics. Used K times per
+    `spacer_iteration` when rollout-accumulation is enabled.
+
+    Returns flat tensors of length n_samp = T*N (CPU) plus the rollout-time
+    scalar metrics (r_task, r_h, kl_log, ent_log) for diagnostics."""
     rec, s_live_per_w, theta_ids_per_w, nc_per_w = rollout(env, policy)
     per_world = score_ref(tp, dec, s_live_per_w)
     W = len(per_world)
@@ -336,38 +344,69 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
                    else ent_pa.mean())
     r_task = rew.mean()
 
-    # --- PPO update: update_epochs × minibatches (Table A3) ----------------
-    flat = lambda x: x.reshape(T * N, *x.shape[2:])
-    f_obs, f_act   = flat(obs), flat(act)
-    f_oldlp        = flat(oldlp)
-    f_adv, f_ret   = flat(adv), flat(ret)
-    f_reflog, f_rv = flat(ref_logits), flat(ref_valid)
+    # --- flatten to per-sample [n_samp, ...] and move to CPU so K micro-
+    # rollouts can be accumulated without exhausting VRAM. PPO update will
+    # pull minibatches back to GPU on demand.
     n_samp = T * N
+    return dict(
+        obs       = obs.reshape(n_samp, -1).cpu(),
+        act       = act.reshape(n_samp).cpu(),
+        oldlp     = oldlp.reshape(n_samp).cpu(),
+        adv       = adv.reshape(n_samp).cpu(),
+        ret       = ret.reshape(n_samp).cpu(),
+        ref_logits= ref_logits.reshape(n_samp, -1).cpu(),
+        ref_valid = ref_valid.reshape(n_samp).cpu(),
+        r_task    = r_task.cpu(),
+        rh        = rh.cpu(),
+        kl_log    = kl_log.cpu(),
+        ent_log   = ent_log.cpu(),
+        n_samp    = n_samp,
+        T         = T,
+        W         = W,
+    )
+
+
+def _ppo_update(policy, opt, flat, alpha, beta):
+    """PPO loop (Table A3): PPO_EPOCHS × PPO_N_MINIBATCH minibatch updates
+    with the closed-form KL anchor (Eq. 5) on the loss (Eq. 2). Flat inputs
+    live on **CPU** (so K accumulated micro-rollouts fit in memory); each
+    minibatch is moved to GPU on demand. Hyperparameters (lr, ent_coef,
+    vf_coef, clip_coef, max_grad_norm, gamma, lambda, epochs, minibatches)
+    are *unchanged* — only the per-minibatch sample count grows with K."""
+    n_samp = flat["obs"].shape[0]
     mb = max(1, n_samp // PPO_N_MINIBATCH)
     loss_acc = pg_acc = v_acc = klu_acc = 0.0
     gnorm = 0.0
     nupd = 0
     for _ep in range(PPO_EPOCHS):
-        perm = torch.randperm(n_samp, device=DEV)
+        perm = torch.randperm(n_samp)               # CPU index → tiny
         for s0 in range(0, n_samp, mb):
             idx = perm[s0:s0 + mb]
-            o, a = f_obs[idx], f_act[idx]
-            _, newlp, entropy, newval = policy(o, action=a)     # PPO forward
-            newval = newval.reshape(-1)
-            ratio = (newlp - f_oldlp[idx]).exp()
-            A = f_adv[idx]
+            o     = flat["obs"][idx].to(DEV, non_blocking=True)
+            a     = flat["act"][idx].to(DEV, non_blocking=True)
+            oldlp = flat["oldlp"][idx].to(DEV, non_blocking=True)
+            adv   = flat["adv"][idx].to(DEV, non_blocking=True)
+            ret   = flat["ret"][idx].to(DEV, non_blocking=True)
+            reflog= flat["ref_logits"][idx].to(DEV, non_blocking=True)
+            rv    = flat["ref_valid"][idx].to(DEV, non_blocking=True)
+
+            # Single backbone forward: one pass yields newlp, entropy, value
+            # AND the log-softmax used for the closed-form KL — replaces the
+            # legacy two-forward pattern (policy(o,a) + policy.logits(o)),
+            # roughly halving PPO-update activation memory at high accum_k.
+            newlp, entropy, newval, lpth = policy.forward_with_logits(o, a)
+            ratio = (newlp - oldlp).exp()
+            A = adv
             if PPO_NORM_ADV:
                 A = (A - A.mean()) / (A.std() + 1e-8)
             pg = torch.max(-A * ratio,
                            -A * torch.clamp(ratio, 1 - PPO_CLIP_COEF,
                                             1 + PPO_CLIP_COEF)).mean()
-            v_loss = 0.5 * ((newval - f_ret[idx]) ** 2).mean()
-            # closed-form KL anchor (Eq. 5) on this minibatch — π_θ moves each
-            # update, π_ref is frozen, so recompute π_θ logits here.
-            rv = f_rv[idx]
+            v_loss = 0.5 * ((newval - ret) ** 2).mean()
+            # closed-form KL anchor (Eq. 5) — uses the log_probs already
+            # computed in the single forward above; π_ref is frozen.
             if rv.any():
-                lpth = torch.log_softmax(policy.logits(o), dim=-1)
-                lprf = torch.log_softmax(f_reflog[idx], dim=-1)
+                lprf = torch.log_softmax(reflog, dim=-1)
                 kl_mb = (lpth.exp() * (lpth - lprf)).sum(-1)[rv].mean()
             else:
                 kl_mb = torch.zeros((), device=DEV)
@@ -380,11 +419,51 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta):
             opt.step()
             loss_acc += float(loss); pg_acc += float(pg)
             v_acc += float(v_loss); klu_acc += float(kl_mb); nupd += 1
+    return dict(loss=loss_acc / nupd, pg=pg_acc / nupd,
+                vloss=v_acc / nupd, kl_upd=klu_acc / nupd, gnorm=gnorm)
+
+
+def spacer_iteration(env, policy, opt, tp, dec, alpha, beta,
+                     accum_k=1, pool=None, inj_rng=None, inject_n=0,
+                     do_inject=False):
+    """One SPACeR training iteration: K self-play micro-rollouts → π_ref
+    scoring (each) → **single PPO update** on the concatenated buffer
+    (GPUDrive PufferLib PPO, Table A3) with the closed-form KL anchor
+    (Eq. 5) on the loss (Eq. 2).
+
+    `accum_k` = rollout-accumulation factor K. K=1 reproduces the prior
+    per-iter behavior exactly. K>1 collects K rollouts on-policy w.r.t. the
+    current θ (no optimizer step between them) so the PPO update sees K×W×T
+    samples per step instead of W×T — closing the per-update batch-size gap
+    to the paper without changing any optimizer hyperparameters.
+
+    Scene injection (when `inject_n > 0`): one `inject_scenes` call before
+    each of the K micro-rollouts (k > 0), and additionally before k=0 when
+    `do_inject` is True — preserves the legacy K=1 semantics where the very
+    first iter uses the initial scene batch and later iters refresh."""
+    parts = []
+    for k in range(accum_k):
+        if inject_n > 0 and (k > 0 or do_inject):
+            inject_scenes(env, pool, inject_n, inj_rng)
+        parts.append(_collect(env, policy, tp, dec))
+
+    # concatenate flat tensors across K micro-rollouts (all CPU; tiny perf cost)
+    keys = ["obs", "act", "oldlp", "adv", "ret", "ref_logits", "ref_valid"]
+    flat = {k: torch.cat([p[k] for p in parts]) for k in keys}
+
+    # rollout-time scalar metrics averaged across the K micro-rollouts
+    r_task = torch.stack([p["r_task"] for p in parts]).mean()
+    rh     = torch.stack([p["rh"]     for p in parts]).mean()
+    kl_log = torch.stack([p["kl_log"] for p in parts]).mean()
+    ent_log= torch.stack([p["ent_log"] for p in parts]).mean()
+
+    upd = _ppo_update(policy, opt, flat, alpha, beta)
 
     return dict(r_task=float(r_task), r_h=float(rh), kl=float(kl_log),
-                ent=float(ent_log), loss=loss_acc / nupd, gnorm=gnorm,
-                pg=pg_acc / nupd, vloss=v_acc / nupd, kl_upd=klu_acc / nupd,
-                ndec=T, worlds=W)
+                ent=float(ent_log), loss=upd["loss"], gnorm=upd["gnorm"],
+                pg=upd["pg"], vloss=upd["vloss"], kl_upd=upd["kl_upd"],
+                ndec=parts[0]["T"], worlds=parts[0]["W"], accum_k=accum_k,
+                n_samp=flat["obs"].shape[0])
 
 
 def save_ckpt(path, policy, opt, it, hist, meta):
@@ -407,7 +486,7 @@ def load_ckpt(path, policy, opt):
 
 def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
         ckpt_dir=None, ckpt_every=0, resume=None, split="training",
-        data_root=None, inject_n=0, inject_every=1):
+        data_root=None, inject_n=0, inject_every=1, accum_k=1):
     """One training run; returns per-iter metrics.
 
     Variant 4 defaults (Table A2 best composite, paper-validated):
@@ -444,7 +523,8 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
     policy._ttraj = tp._get_agent_shape_and_token_traj(
         torch.zeros(env.cont_agent_mask.shape[1], dtype=torch.long))[2]
     opt = torch.optim.Adam(policy.parameters(), lr=lr)
-    meta = dict(beta=beta, alpha=alpha, n_worlds=n_worlds, lr=lr)
+    meta = dict(beta=beta, alpha=alpha, n_worlds=n_worlds, lr=lr,
+                accum_k=accum_k)
     start_it, hist = 0, []
     if resume:
         start_it, hist, m_old = load_ckpt(resume, policy, opt)
@@ -463,13 +543,23 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
         inj_rng = random.Random(42)
         print(f"  [inject] scene injection ON: {inject_n}/{n_worlds} worlds "
               f"refreshed every {inject_every} iter(s); pool={len(pool)} "
-              f"scenes ({root})")
+              f"scenes ({root}); accum_k={accum_k} ⇒ {accum_k}× injections per iter")
+    if accum_k > 1:
+        print(f"  [accum] rollout-accumulation K={accum_k} → per-update "
+              f"samples = K × W × T × (cmask agents); minibatches still "
+              f"PPO_N_MINIBATCH={PPO_N_MINIBATCH}, lr/coefs unchanged")
     t0 = time.time()
     for it in range(start_it, iters):
-        if (inject_n > 0 and it > start_it
-                and (it - start_it) % inject_every == 0):
-            inject_scenes(env, pool, inject_n, inj_rng)
-        m = spacer_iteration(env, policy, opt, tp, dec, alpha, beta)
+        do_inj = (inject_n > 0 and it > start_it
+                  and (it - start_it) % inject_every == 0)
+        m = spacer_iteration(env, policy, opt, tp, dec, alpha, beta,
+                             accum_k=accum_k, pool=pool, inj_rng=inj_rng,
+                             inject_n=inject_n, do_inject=do_inj)
+        if it == start_it:
+            n_per_step = m["n_samp"] // m["ndec"]
+            print(f"  [scale] samples/update={m['n_samp']}  "
+                  f"(T={m['ndec']}, N≈{n_per_step}, K={accum_k}, "
+                  f"minibatch≈{m['n_samp'] // PPO_N_MINIBATCH})")
         hist.append(m)
         print(f"  [{tag}β={beta} W={n_worlds}] it{it:02d}: "
               f"r_task={m['r_task']:+.3f} r_h={m['r_h']:+.3f} "
@@ -535,6 +625,14 @@ if __name__ == "__main__":
     ap.add_argument("--inject-every", type=int, default=1,
                     help="Inject every N iterations (default 1 = every "
                     "iteration, paper's 'every batch').")
+    ap.add_argument("--accum-k", type=int, default=1,
+                    help="Rollout-accumulation factor K (default 1, "
+                    "back-compat). Collects K rollouts on-policy then runs "
+                    "one PPO update — per-update samples = K × W × T × "
+                    "n_agents. Closes the per-update batch-size gap to the "
+                    "paper while keeping all Table A3 coefs (lr, ent_coef, "
+                    "etc.) unchanged. CPU-side accumulation; mind RAM at "
+                    "high K.")
     a = ap.parse_args()
 
     if a.mode == "smoke":                       # M5b faithful short run
@@ -545,7 +643,7 @@ if __name__ == "__main__":
                         n_worlds=a.worlds, ckpt_dir=a.ckpt_dir,
                         ckpt_every=a.ckpt_every, resume=a.resume, split=a.split,
                         data_root=a.data_root, inject_n=a.inject_n,
-                        inject_every=a.inject_every)
+                        inject_every=a.inject_every, accum_k=a.accum_k)
         fin = all(np.isfinite([h[-1]['loss'], h[-1]['kl'], h[-1]['r_h']]))
         print(f"params changed (mean|Δw|)={dw:.2e} | finite={fin} | "
               f"{dt:.1f}s ({a.iters/dt:.2f} it/s)")

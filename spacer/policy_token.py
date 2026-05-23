@@ -86,6 +86,24 @@ class TokenPolicy(nn.Module):
         """Returns (token_idx, logprob, entropy, value)."""
         return self.net(obs, action=action, deterministic=deterministic)
 
+    # --- single-forward PPO+KL update path (used by _ppo_update with K-acc) -
+    # Avoids the duplicate forward through backbone+actor that calling
+    # `policy(o, action=a)` then `policy.logits(o)` would do. Roughly halves
+    # the PPO-update activation memory at high accum_k. Math is identical.
+    def forward_with_logits(self, obs, action):
+        """Single backbone forward → (newlp, entropy, value, log_probs)
+        all derived from one shared-embed pass. `log_probs` is the
+        log_softmax over the 2048-token vocab — the caller uses it for
+        closed-form KL (Eq. 5) without a second forward."""
+        hidden = self.net.encode_observations(obs)
+        logits = self.net.actor(hidden)
+        value  = self.net.critic(hidden).reshape(-1)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        newlp = log_probs.gather(-1,
+                                 action.long().unsqueeze(-1)).squeeze(-1)
+        entropy = -(log_probs.exp() * log_probs).sum(-1)
+        return newlp, entropy, value, log_probs
+
     # --- full categorical (needed by M3 Eq. 5 KL / Eq. 3) ---
     def logits(self, obs):
         return self.net.actor(self.net.encode_observations(obs))  # [N, 2048]
