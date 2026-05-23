@@ -16,15 +16,21 @@
 \begin{document}
 \begin{algorithm}[H]
 \DontPrintSemicolon
-\caption{SPACeR Training --- as implemented (\texttt{spacer/train\_spacer.py}, post Test~22)}
+\caption{SPACeR Training Test~22 --- as implemented (\texttt{spacer/train\_spacer.py}); $K\!=\!46$ paper-batch rollout-accumulation, single-forward PPO update, paper road-context cap}
 \KwIn{frozen reference $\pref$ (CAT-K \texttt{clsft\_E9} SMARTDecoder, centralized, full-scene);\
-      KL weight $\beta = 0.1$;\ infraction weights $w_{\mathrm{coll}}=w_{\mathrm{off}}=0.75$;\
+      KL weight $\beta = 0.10$ (Variant~4 default; Test~21 swept $\{0.01,0.10,1.0\}$);\
+      infraction weights $w_{\mathrm{coll}}=w_{\mathrm{off}}=0.75$;\
       $\alpha=0,\ w_{\mathrm{goal}}=0$ (Variant~4);\
-      rollout-accumulation factor $K$ (\texttt{-{}-accum-k}; $K=46$ matches paper batch);\
-      paper Table~A3 PPO hyperparameters: $\gamma=0.99$, $\lambda=0.95$, clip $0.2$,
-      $c_{\mathrm{vf}}=0.3$, $c_{\mathrm{ent}}=10^{-4}$, grad-clip $0.5$,
-      $4$ epochs $\times$ $16$ minibatches, Adam lr $3\times10^{-4}$, seed $42$;\
-      \texttt{roadgraph\_top\_k}$=120$ (paper~\S{A.3}: cap road-context per agent).}
+      \textbf{rollout-accumulation factor $K=46$} (\texttt{-{}-accum-k 46}; gives
+      samples/update $=126{,}576\!\approx\!131{,}072$, the paper Table~A3 \texttt{batch\_size});\
+      iters $=80$ (Test~22 budget; killed at it67/80 after plateau, evaluated it50 ckpt);\
+      paper Table~A3 PPO hyperparameters (\emph{unchanged from Test~18 onward}):
+      $\gamma=0.99$, $\lambda=0.95$, clip $0.2$, $c_{\mathrm{vf}}=0.3$,
+      $c_{\mathrm{ent}}=10^{-4}$, grad-clip $0.5$, $4$ epochs $\times$ $16$ minibatches,
+      Adam lr $3\times10^{-4}$, seed $42$;\
+      \texttt{roadgraph\_top\_k}$=120$ (paper~\S{A.3}: cap road-context per agent);\
+      $W=24$ parallel worlds, $T=18$ token-steps per rollout,\
+      injection: $5{,}000$-scene pool, $N=24$ fresh per micro-rollout.}
 \KwOut{trained decentralized policy $\pth$}
 \BlankLine
 initialise $\pth$ --- late-fusion MLP: 2048-token actor $+$ critic \tcp*{\texttt{TokenPolicy}}
@@ -64,51 +70,17 @@ initialise $\pth$ --- late-fusion MLP: 2048-token actor $+$ critic \tcp*{\texttt
 \end{algorithm}
 
 \vspace{6pt}
-\noindent\footnotesize\textit{Deviations from the paper's Algorithm~1.}
-$W \le 48$ (paper~300, RTX~3060 ceiling). $K\!=\!46$ rollout-accumulation gives
-samples/update $=\!126{,}576$ \emph{(96\,\% of paper's $131{,}072$)} ---
-per-update batch is now paper-faithful. Total env-steps still $\sim\!10^{7}$
-(paper~$10^{9}$, \emph{$\sim\!160\times$ short, compute-bound}).
-$\beta\!=\!0.1$ default (paper~$0.01$; both in paper's robust band).
-$2\,$Hz control (paper~$5\,$Hz, \texttt{clsft\_E9} native tokenisation).
-Vocab~$2{,}048$ (paper~$\sim\!200$, locked by the public \texttt{clsft\_E9}
-checkpoint --- candidate cause of the closed-form KL anchor being too soft
-per token).
-\texttt{roadgraph\_top\_k}$=120$ now matches paper~\S{A.3}.
-
-\vspace{4pt}
-\noindent\textbf{\footnotesize Reproduction history (\texttt{test.md}):}
-\begin{center}\footnotesize
-\renewcommand{\arraystretch}{1.15}
-\begin{tabular}{|l|l|l|l|l|}
-\hline
-\textbf{Test} & \textbf{Config} & \textbf{goal} & \textbf{minADE} & \textbf{What it ruled out} \\
-\hline
-20 & V4 fixed 24-scenes, $K\!=\!1$, $\beta\!=\!0.1$, 5{,}750 it
-   & $0.019$ & $24.97\,$m & dataset size, $2\,$Hz cadence \\
-\hline
-21 & V4 + $5{,}000$-scene injection, $K\!=\!1$,
-     $\beta\!\in\!\{0.01,0.10,1.00\}$, 1{,}500 it each
-   & $0.008\text{--}0.028$ & $27.2\text{--}29.6\,$m
-   & scene injection, anchor strength ($\beta$) \\
-\hline
-22 & V4 + injection, \textbf{$K\!=\!46$ paper-batch},
-     $\beta\!=\!0.10$, single-fwd, road-cap $120$
-   & $0.014$ & $28.23\,$m & per-update batch size, batch quality \\
-\hline
-\multicolumn{2}{|r|}{\emph{teacher} ($\pref$ closed-loop, ref arm):}
-   & $0.293$ & $4.21\,$m & --- \\
-\hline
-\end{tabular}
-\end{center}
-
-\noindent\footnotesize All three trained policies land in the same
-\textbf{degenerate ``safe-but-lost''} basin: infraction-avoidance comparable
-to / better than the teacher, but goal-rate $\sim\!10$--$20\!\times$ lower
-and minADE $\sim\!6\!\times$ worse. The algorithm itself --- Eqs.\ 1/2/3/5,
-PufferLib PPO, Variant~4, rollout accumulation, single-forward update,
-paper road-context cap --- is faithfully reproduced. The remaining gaps to
-the paper are \textbf{total env-steps} (compute-bound, $\sim\!160\times$
-short) and the \textbf{vocab mismatch} (locked by the public
-\texttt{clsft\_E9} checkpoint).
+\noindent\footnotesize\textit{Test~22 result.} K=46 closes the per-update
+batch-size gap to the paper (samples/update $=126{,}576\!\approx\!131{,}072$
+Table~A3 value, 96\%). Trained for 50 outer iters
+($\Rightarrow 50 \!\times\! K \!\times\! W \!\times\! T \!\times\! N \approx
+6.3\!\times\!10^{6}$ env-steps; paper $10^{9}$, $\sim\!160\times$ short).
+Phase-A eval on the new 941-scene validation set:
+collision $=0.058$, off-road $=0.038$, \textbf{goal\_rate} $=0.014$,
+\textbf{minADE} $=28.23\,$m vs the teacher's $0.293/4.21\,$m. \textbf{No
+improvement over Test~21 b=0.10} --- per-update batch size and batch
+quality are now empirically ruled out as causes of the persistent
+degenerate ``safe-but-lost'' optimum. Remaining suspects: total
+env-step budget (compute-bound) and vocab mismatch ($2{,}048$ tokens vs
+paper's $\sim\!200$, locked by public \texttt{clsft\_E9}).
 \end{document}
