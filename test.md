@@ -1298,6 +1298,137 @@ logs) persist across recreates.
 
 ---
 
+## Test 22 — paper-batch (K=46) rollout-accumulation + (D)+(E)  ⚠️ NO IMPROVEMENT vs Test 21
+
+**Hypothesis.** Test 21 ruled out dataset size, cadence, anchor strength,
+and scene-injection as causes of the degenerate "safe-but-lost" optimum.
+The remaining structural suspect was **per-update batch size**: ours
+~120-sample minibatches vs the paper's **8,192-sample** minibatches
+(~46× smaller per-update batch in real terms after correcting our
+sample-count math: T=18 token-decisions × N≈158 cmask-agents across
+W=24 = 2,844 samples per K=1 rollout, so K=46 ≈ paper's `batch_size`
+131,072 per Table A3). All Table A3 hyperparameters (lr 3e-4, ent_coef
+1e-4, vf_coef 0.3, clip_coef 0.2, max_grad_norm 0.5, γ 0.99, λ 0.95,
+PPO_EPOCHS 4, PPO_N_MINIBATCH 16) **held verbatim**.
+
+**Implementation.** Three paper-faithful interventions added to
+`spacer/train_spacer.py`:
+
+1. **Rollout accumulation** (`--accum-k`): split `spacer_iteration` into
+   `_collect` (one micro-rollout: rollout + score_ref + GAE + ref-logits
+   scatter, flattened to per-sample CPU buffers) and `_ppo_update` (the
+   PPO loop, reading flat buffers and moving each minibatch to GPU on
+   demand). spacer_iteration loops K micro-rollouts on-policy w.r.t.
+   frozen θ then runs *one* PPO update on the K×W×T-sample union.
+   Scene injection moves into the K loop (K different scene batches per
+   update). K=1 is identical to prior behaviour (back-compat).
+2. **(D) Single-forward PPO update** — `TokenPolicy.forward_with_logits`
+   computes `(newlp, entropy, value, log_probs)` in one backbone+actor
+   pass, eliminating the duplicate forward the legacy
+   `policy(o,a)` + `policy.logits(o)` pair did per minibatch. Halves
+   PPO-step activation memory; mathematically identical.
+3. **(E) `roadgraph_top_k=120`** in `build_env` (paper §A.3 trick:
+   *"we limit the maximum number of map elements per agent from 200 to
+   120 to reduce GPU memory"*). Shrinks `obs_dim` (input) and Madrona
+   per-agent road state.
+
+**Probes (1-iter each):**
+
+| K | Probe outcome |
+|---|---|
+| 1, 4 | ✅ PASSED, used as back-compat baseline |
+| 64 (= 1.39× paper batch) | ❌ OOM by ~300 MB during PPO forward |
+| 46 (= 1.00× paper batch) | ❌ OOM by ~18 MB pre-D+E; ✅ **PASSED with D+E** |
+
+After D+E, K=46 ran with **~126,576 samples per PPO update — 96% of the
+paper's 131,072**, minibatch ≈ 7,911 (paper's 8,192), wall-clock 393 s/iter.
+
+**Training run.** β=0.10, K=46, iters=80, W=24, 5,000-scene pool from
+the new 10k training set, full-resample injection (24 fresh scenes per
+micro-rollout → 24 × 46 = 1,104 scene draws per outer iter), Variant 4
+(α=0, w_goal=0, w_coll=w_off=0.75). Killed at **it67/80** after curves
+visibly plateaued from ~it30 onward; evaluated the
+`ckpt_b0.1_W24_it000050.pt` checkpoint. Training-curve final state:
+r_task −0.04, KL 0.65 (lower than any Test 21 run), r_h −2.84 (better
+than any Test 21 injection run), entropy 5.3, value loss 0.7, total
+loss 0.30. Curves visibly *smoother* than K=1 runs — bigger-batch
+quality showing up as cleaner trajectories.
+
+**Phase-A eval** (88 scenes × 6 rollouts × 3 arms; new 941-scene
+validation split) — apples-to-apples vs Test 21 b0.10:
+
+| Metric (trained π_θ) | **K=46 it50** | Test 21 b0.10 | random | ref |
+|---|---|---|---|---|
+| collision ↓ | 0.058 | 0.047 | 0.228 | 0.073 |
+| off-road ↓ | 0.038 | 0.039 | 0.547 | 0.258 |
+| **goal_rate ↑** | **0.014** | 0.024 | 0.109 | **0.293** |
+| **minADE (m) ↓** | **28.23** | 27.41 | 20.78 | **4.21** |
+| r_task | −0.039 | −0.032 | −0.385 | — |
+| KL | 0.626 | 0.727 | 3.22 | — |
+| r_h | −3.259 | −3.357 | −2.703 | −1.740 |
+
+**Verdict — paper-batch did NOT escape the degenerate optimum.** K=46
+landed in the *same* "safe-but-lost" basin as every Test 21 run:
+- Infraction avoidance comparable / slightly worse than Test 21 b0.10.
+- **goal_rate 0.014 — actually slightly WORSE than Test 21 b0.10's
+  0.024** and ~21× below the teacher's 0.293.
+- **minADE 28 m vs teacher's 4 m** — same ~7× gap.
+- Training-metric "wins" (lower KL, higher r_h) **did not translate** to
+  better closed-loop driving; if anything they tracked with marginally
+  worse goal_rate.
+
+**What this rules out.** Cumulative with prior tests:
+
+| Hypothesised cause of degenerate optimum | Status |
+|---|---|
+| Dataset size | ❌ ruled out (Test 20 train-split control) |
+| Control cadence (2 Hz) | ❌ ruled out (Test 20 ref arm: minADE 4.7 m) |
+| Scene-injection (rotation vs fixed) | ❌ ruled out (Test 21) |
+| KL anchor strength (β) | ❌ ruled out (Test 21 sweep 0.01/0.10/1.00) |
+| **Per-update batch size** | ❌ **ruled out (Test 22: K=46 = paper batch)** |
+| **Per-update activation efficiency** | ❌ ruled out (D single-forward, no change) |
+| **Per-agent road-context** | ❌ ruled out (E: paper's 120 setting, no change) |
+
+**What remains as candidate causes** (in order of plausibility):
+1. **Total env-steps budget.** Ours ~6 × 10⁶ env-steps; paper 1 × 10⁹
+   (~160× more). Even with paper-batch quality, ~50 PPO updates may
+   simply be too few to escape the basin. Paper-scale ~7,900 K=46 iters
+   ⇒ ~36 days on a 3060 — out of reach.
+2. **π_ref identity / vocab mismatch.** Our π_ref = public `clsft_E9`
+   (2048-token vocab); paper's internal π_ref had ~200 tokens. A 10×
+   wider vocab may make the closed-form KL anchor *too soft per token*
+   to constrain closed-loop trajectories, regardless of β.
+3. **Subtle bug in the closed-form KL** computation worth re-auditing —
+   it's the single load-bearing term in Variant 4 and the run that
+   should have been most paper-like (K=46, D, E) showed the largest
+   KL → driving disconnect.
+4. **Unstated env / config differences** between our GPUDrive setup
+   and the paper's exact reproduction.
+
+**Files / artefacts:**
+- `spacer/train_spacer.py` — rollout accumulation infrastructure
+  (`_collect`, `_ppo_update`, `spacer_iteration` K loop, CLI `--accum-k`)
+  + (D) single-forward call site + (E) `roadgraph_top_k=120` in
+  `build_env`.
+- `spacer/policy_token.py` — `forward_with_logits` for (D).
+- `spacer/plot_compare.py` — added optional 3rd field
+  `label:log:samples_per_iter` for env-step-axis overlays.
+- `spacer/plot_curves.py` — removed the moving-average overlay to
+  eliminate the `mode='same'` boundary artefact at low iter counts.
+- `checkpoints/k46_b0.1/ckpt_b0.1_W24_it{25,50}.pt`.
+- `eval_runs/ckpt_b0.1_W24_it000050/quick_metrics.json`.
+- `plots/k46_b0.1_it{0011,0028,0046,0067}_curves.png` — single-run
+  K=46 snapshots at progressive iters.
+- `plots/compare_5runs_envsteps.png` — 5-way overlay on env-step axis
+  (β=0.01 / β=0.10 / β=1.00 K=1 + Test 20 + K=46 b=0.10).
+
+**Headline.** The K=46 result is the most paper-faithful intervention
+possible at our hardware scale, and it left the degenerate optimum
+unchanged. The compute-scale gap to the paper (~160× env-steps) and/or
+the π_ref / vocab mismatch are the remaining suspects.
+
+---
+
 ## Combined status
 
 | Piece | Status |
@@ -1321,6 +1452,7 @@ logs) persist across recreates.
 | **r_task reward-weight bug** | ✅ **Test 19 — FIXED**: `get_rewards()` took weights as kwarg-defaults (−0.5/+1.0/−0.5), ignored `EnvConfig`. Tests 12–18 ran goal-reward-ON (≈ "Goal + KL"), not Variant 4. `rollout()` now passes `env.config` weights ⇒ first genuine Variant 4 run is the post-fix long run. |
 | **Genuine Variant 4 long run + Phase-A eval** | ⚠️ **Test 20** — V4 loop optimizes r_inf (collision/off-road ≪ random, ≤ teacher) but converges to a **degenerate safe-but-lost policy**: goal_rate 0.019 (< random 0.136), minADE 25 m vs teacher 4.5 m. Pipeline correct; reward config + scale insufficient for good driving. Train-split control (addendum) shows **zero train-vs-val gap ⇒ dataset size exonerated**; cause is the reward/KL-anchor, not data. |
 | **β-sweep with paper-style scene injection (10k dataset)** | ⚠️ **Test 21** — three V4 runs at β ∈ {0.01, 0.10, 1.00}, full-resample injection (5,000 rotating scenes), 1,500 iters each. All three **land in the same degenerate optimum as Test 20** (goal ~0.02, minADE ~27–30 m vs teacher 4.7 m); β=0.01 marginally best on driving, β=1.00 worst (over-regularised). **Injection ruled out**, **anchor strength ruled out** ⇒ gating issue is **compute scale**, not algorithm/reward: our minibatch is ~68× smaller than the paper's and entropy collapses ~250× faster per env-step. |
+| **Paper-batch K=46 rollout-accum + (D) single-fwd + (E) roadgraph_top_k=120** | ⚠️ **Test 22** — most paper-faithful intervention possible at our scale: K=46 = 126,576 samples/update (96% of paper's 131,072), Table A3 coefs verbatim. Killed at it67/80 (plateau). **Eval: NO IMPROVEMENT vs Test 21 b0.10** — goal_rate 0.014 (slightly worse than 0.024), minADE 28.2 m (vs 27.4 m). KL/r_h training-metric wins did not transfer to driving. **Per-update batch size ruled out.** Remaining suspects: (1) total env-steps budget (ours 6 × 10⁶ vs paper 10⁹), (2) π_ref vocab mismatch (ours 2048 vs paper ~200). |
 | Convergent paper-scale run | ✗ out of reach on 3060 (documented ceiling) |
 
 **The entire SPACeR mechanism is implemented, numerically exact, and

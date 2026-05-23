@@ -1,0 +1,66 @@
+{
+  "ckpt": "/spacer/checkpoints/k46_b0.1/ckpt_b0.1_W24_it000050.pt",
+  "config": {
+    "scene_batches": 11,
+    "worlds": 8,
+    "rollouts_per_scene": 6,
+    "dynamics": "state",
+    "collision_behavior": "stop",
+    "variant": "V4 (KL + r_inf)"
+  },
+  "arms": {
+    "trained": {
+      "collision_rate": 0.05818107313561169,
+      "off_road_rate": 0.03802555761384693,
+      "goal_rate": 0.013674004807729612,
+      "r_task_mean": -0.038682163631275406,
+      "min_ade_m": 28.228488251652752,
+      "ade_completion_rate": 0.9946291113446538,
+      "r_h_mean": -3.2586615735834297,
+      "kl_mean": 0.6259416450153698,
+      "entropy_mean": 5.31955489245328,
+      "wall_time_s": 306.43949723243713,
+      "throughput_scenarios_per_s": 1.7230154884359024,
+      "n_scenes": 88,
+      "n_rollouts": 528,
+      "ckpt_it": 50,
+      "ckpt_meta": {
+        "beta": 0.1,
+        "alpha": 0.0,
+        "n_worlds": 24,
+        "lr": 0.0003,
+        "accum_k": 46
+      }
+    },
+    "random": {
+      "collision_rate": 0.22832563841207462,
+      "off_road_rate": 0.5467908197280132,
+      "goal_rate": 0.10883663981362725,
+      "r_task_mean": -0.38503063041152374,
+      "min_ade_m": 20.784787155685844,
+      "ade_completion_rate": 0.6598916394412214,
+      "r_h_mean": -2.703331546349959,
+      "kl_mean": 3.2239388552579014,
+      "entropy_mean": 7.624618140133944,
+      "wall_time_s": 286.818749666214,
+      "throughput_scenarios_per_s": 1.8408838355737247,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    },
+    "ref": {
+      "collision_rate": 0.07255283221038002,
+      "off_road_rate": 0.25778356612180214,
+      "goal_rate": 0.29258392277089035,
+      "r_task_mean": NaN,
+      "min_ade_m": 4.212771310635985,
+      "ade_completion_rate": 0.7210206161954318,
+      "r_h_mean": -1.7396629091465114,
+      "kl_mean": NaN,
+      "entropy_mean": 1.374655326207479,
+      "wall_time_s": 374.33598375320435,
+      "throughput_scenarios_per_s": 1.4104975821616568,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    }
+  }
+}
