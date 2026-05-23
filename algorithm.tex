@@ -69,14 +69,46 @@ $W \le 48$ (paper~300, RTX~3060 ceiling). $K\!=\!46$ rollout-accumulation gives
 samples/update $=\!126{,}576$ \emph{(96\,\% of paper's $131{,}072$)} ---
 per-update batch is now paper-faithful. Total env-steps still $\sim\!10^{7}$
 (paper~$10^{9}$, \emph{$\sim\!160\times$ short, compute-bound}).
-$\beta\!=\!0.1$ (paper~$0.01$; both in paper's robust band).
+$\beta\!=\!0.1$ default (paper~$0.01$; both in paper's robust band).
 $2\,$Hz control (paper~$5\,$Hz, \texttt{clsft\_E9} native tokenisation).
 Vocab~$2{,}048$ (paper~$\sim\!200$, locked by the public \texttt{clsft\_E9}
 checkpoint --- candidate cause of the closed-form KL anchor being too soft
 per token).
 \texttt{roadgraph\_top\_k}$=120$ now matches paper~\S{A.3}.
-The algorithm itself --- Eqs.\ 1/2/3/5, PufferLib PPO, Variant~4, rollout
-accumulation, single-forward update --- is faithfully reproduced; the
-remaining gaps are total env-steps and the vocab mismatch (see \texttt{test.md}
-Tests~20/21/22).
+
+\vspace{4pt}
+\noindent\textbf{\footnotesize Reproduction history (\texttt{test.md}):}
+\begin{center}\footnotesize
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Test} & \textbf{Config} & \textbf{goal} & \textbf{minADE} & \textbf{What it ruled out} \\
+\hline
+20 & V4 fixed 24-scenes, $K\!=\!1$, $\beta\!=\!0.1$, 5{,}750 it
+   & $0.019$ & $24.97\,$m & dataset size, $2\,$Hz cadence \\
+\hline
+21 & V4 + $5{,}000$-scene injection, $K\!=\!1$,
+     $\beta\!\in\!\{0.01,0.10,1.00\}$, 1{,}500 it each
+   & $0.008\text{--}0.028$ & $27.2\text{--}29.6\,$m
+   & scene injection, anchor strength ($\beta$) \\
+\hline
+22 & V4 + injection, \textbf{$K\!=\!46$ paper-batch},
+     $\beta\!=\!0.10$, single-fwd, road-cap $120$
+   & $0.014$ & $28.23\,$m & per-update batch size, batch quality \\
+\hline
+\multicolumn{2}{|r|}{\emph{teacher} ($\pref$ closed-loop, ref arm):}
+   & $0.293$ & $4.21\,$m & --- \\
+\hline
+\end{tabular}
+\end{center}
+
+\noindent\footnotesize All three trained policies land in the same
+\textbf{degenerate ``safe-but-lost''} basin: infraction-avoidance comparable
+to / better than the teacher, but goal-rate $\sim\!10$--$20\!\times$ lower
+and minADE $\sim\!6\!\times$ worse. The algorithm itself --- Eqs.\ 1/2/3/5,
+PufferLib PPO, Variant~4, rollout accumulation, single-forward update,
+paper road-context cap --- is faithfully reproduced. The remaining gaps to
+the paper are \textbf{total env-steps} (compute-bound, $\sim\!160\times$
+short) and the \textbf{vocab mismatch} (locked by the public
+\texttt{clsft\_E9} checkpoint).
 \end{document}
