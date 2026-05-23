@@ -31,7 +31,7 @@ from gpudrive.datatypes.observation import GlobalEgoState
 from src.smart.modules.smart_decoder import SMARTDecoder
 from src.smart.tokens.token_processor import TokenProcessor
 from gpudrive_to_smart import (extract_gpudrive_scene, scene_dict_to_heterodata,
-                               finite_diff_velocity, NUM_STEPS)
+                               finite_diff_velocity, NUM_STEPS, NUM_HIST_STEPS)
 from token_decode import decode_token_sequence
 from policy_token import TokenPolicy, N_TOKENS
 from anchor import (kl_theta_ref, r_humanlike, align_executed_tokens,
@@ -163,13 +163,33 @@ def rollout(env, policy):
     # vehicles-first token templates (all type 0); A_max matches each world's
     # padded agent count, so one [A_max, 2048, 4, 2] template slices for any W
     tp_traj = policy._ttraj
-    prev_pos = [torch.tensor(scenes0[w]["pos_xy"][:, 0], dtype=torch.float32)
+    # --- Pre-fill 1s logged WOMD history (steps 0..NUM_HIST_STEPS-1 = 0..10).
+    # Paper convention: 1s history + 8s policy rollout. Previously the rollout
+    # started at step 0 and π_θ decided through the history window, biasing
+    # π_ref's logits at step 10+ (Audit #2 Claim 1; Audit #3 Concern 3).
+    # Now buf_pos/buf_head carry logged WOMD data for steps 0..10, and the
+    # sim is advanced from step 0 to step 10 using set_state with logged
+    # poses for ALL agents.
+    STEP_CURRENT = NUM_HIST_STEPS - 1                        # = 10
+    for w in range(W):
+        buf_pos[w][:, :NUM_HIST_STEPS] = scenes0[w]["pos_xy"][:, :NUM_HIST_STEPS]
+        buf_head[w][:, :NUM_HIST_STEPS] = scenes0[w]["yaw"][:, :NUM_HIST_STEPS]
+    for step in range(1, NUM_HIST_STEPS):
+        dpos = [torch.tensor(scenes0[w]["pos_xy"][:, step], dtype=torch.float32)
                 for w in range(W)]
-    prev_head = [torch.tensor(scenes0[w]["yaw"][:, 0], dtype=torch.float32)
+        dhead = [torch.tensor(scenes0[w]["yaw"][:, step], dtype=torch.float32)
                  for w in range(W)]
-    steps = list(range(SHIFT, NUM_STEPS, SHIFT))             # 18 token-steps
+        set_state(env, dpos, dhead)
+    obs = env.get_obs()                                      # refresh after history advance
+    # π_θ decisions: 16 token-steps from step 10 to step 90, matching
+    # π_ref's 16 next_token_logits exactly (off=0 in spacer_iteration).
+    prev_pos = [torch.tensor(scenes0[w]["pos_xy"][:, STEP_CURRENT], dtype=torch.float32)
+                for w in range(W)]
+    prev_head = [torch.tensor(scenes0[w]["yaw"][:, STEP_CURRENT], dtype=torch.float32)
+                 for w in range(W)]
+    steps = list(range(STEP_CURRENT + SHIFT, NUM_STEPS, SHIFT))   # [15..90] = 16
     rec = {"obs": [], "tok": [], "lp": [], "val": [], "logits": [], "rtask": []}
-    t = 0
+    t = STEP_CURRENT
     for k, i in enumerate(steps):
         g = GlobalEgoState.from_tensor(env.sim.absolute_self_observation_tensor(),
                                        backend="torch", device=DEV)
@@ -197,7 +217,17 @@ def rollout(env, policy):
             dp, dh = decode_token_sequence(
                 tok_w, prev_pos[w], prev_head[w], tp_traj[:Aw],
                 torch.ones(Aw, 1, dtype=torch.bool))
-            dpos_per_w.append(dp[:, 0]); dhead_per_w.append(dh[:, 0])
+            # --- Non-controlled agents → LOGGED poses (paper-style log-replay).
+            # Previously set_state wrote token-0-decoded poses for ALL agents,
+            # freezing non-controlled at unphysical positions and corrupting
+            # π_ref's scene context (Audit #2 Claim 2). Same pattern already
+            # correct in eval_quick.ref_rollout.
+            cmask_cpu = cmask[w].cpu()[:Aw]
+            target_pos = torch.tensor(scenes0[w]["pos_xy"][:, i], dtype=torch.float32)
+            target_head = torch.tensor(scenes0[w]["yaw"][:, i], dtype=torch.float32)
+            target_pos[cmask_cpu] = dp[cmask_cpu, 0]
+            target_head[cmask_cpu] = dh[cmask_cpu, 0]
+            dpos_per_w.append(target_pos); dhead_per_w.append(target_head)
         for _ in range(SHIFT):
             set_state(env, dpos_per_w, dhead_per_w)
         prev_pos, prev_head = dpos_per_w, dhead_per_w
@@ -292,7 +322,11 @@ def _collect(env, policy, tp, dec):
     W = len(per_world)
     T = len(rec["tok"])
     N = rec["tok"][0].shape[0]                       # nc_total (flat over W)
-    off = REF_STEP_OFFSET
+    # post-history-fix: π_θ makes 16 decisions == π_ref's 16 next_token_logits;
+    # direct alignment, no offset. (Was REF_STEP_OFFSET=2 when π_θ made 18
+    # decisions including 2 in the WOMD history window — Audit #2 Claim 1.)
+    # REF_STEP_OFFSET stays in anchor.py for the gt_idx-slice purpose.
+    off = 0
 
     # --- stack rollout records → [T, N] (all detached; PPO recomputes) -----
     obs   = torch.stack(rec["obs"])                  # [T, N, D]
@@ -459,11 +493,23 @@ def spacer_iteration(env, policy, opt, tp, dec, alpha, beta,
 
     upd = _ppo_update(policy, opt, flat, alpha, beta)
 
+    # --- Instrumentation (Audit #3 #2 + Interaction A) ---
+    # valid_coverage: fraction of (agent, token-step) pairs that have a π_ref
+    # match. Effective KL weight is `β × valid_coverage`; if << 1 the anchor
+    # signal is weaker than β alone suggests.
+    valid_coverage = float(flat["ref_valid"].float().mean())
+    # top action tokens by count — tests the "wide-vocab stand-still attractor"
+    # hypothesis. If most tokens cluster on a few IDs the policy is hiding in
+    # low-motion tokens despite the wide 2048-vocab.
+    counts = torch.bincount(flat["act"].long(), minlength=policy.n_tokens)
+    top = counts.topk(5)
+    top_tokens = list(zip(top.indices.tolist(), top.values.tolist()))
     return dict(r_task=float(r_task), r_h=float(rh), kl=float(kl_log),
                 ent=float(ent_log), loss=upd["loss"], gnorm=upd["gnorm"],
                 pg=upd["pg"], vloss=upd["vloss"], kl_upd=upd["kl_upd"],
                 ndec=parts[0]["T"], worlds=parts[0]["W"], accum_k=accum_k,
-                n_samp=flat["obs"].shape[0])
+                n_samp=flat["obs"].shape[0],
+                valid_coverage=valid_coverage, top_tokens=top_tokens)
 
 
 def save_ckpt(path, policy, opt, it, hist, meta):
@@ -560,12 +606,16 @@ def run(beta, iters, scenes, alpha=0.0, lr=3e-4, tag="", n_worlds=1,
             print(f"  [scale] samples/update={m['n_samp']}  "
                   f"(T={m['ndec']}, N≈{n_per_step}, K={accum_k}, "
                   f"minibatch≈{m['n_samp'] // PPO_N_MINIBATCH})")
+            print(f"  [tokens] iter 0 top-5: {m['top_tokens']}")
         hist.append(m)
         print(f"  [{tag}β={beta} W={n_worlds}] it{it:02d}: "
               f"r_task={m['r_task']:+.3f} r_h={m['r_h']:+.3f} "
               f"KL={m['kl']:.3f} H={m['ent']:.3f} "
               f"pg={m['pg']:+.3f} vL={m['vloss']:.3f} "
-              f"loss={m['loss']:+.3f} |g|={m['gnorm']:.2f}")
+              f"loss={m['loss']:+.3f} |g|={m['gnorm']:.2f} "
+              f"valid={m['valid_coverage']:.2f}")
+        if it + 1 == iters:
+            print(f"  [tokens] iter {it} top-5: {m['top_tokens']}")
         if ckpt_dir and ckpt_every > 0 and ((it + 1) % ckpt_every == 0
                                              or (it + 1) == iters):
             fn = os.path.join(ckpt_dir,
