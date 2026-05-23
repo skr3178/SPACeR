@@ -1,10 +1,10 @@
-% SPACeR Training — Algorithm 1, as implemented in spacer/train_spacer.py
-% (post Test 18: PufferLib PPO port). Compile + render to algorithm.png:
+% SPACeR Training --- Algorithm 1, as implemented in spacer/train_spacer.py
+% (post Test 22: rollout-accumulation K + single-forward PPO + paper road-cap)
+% Compile + render to algorithm.png:
 %   pdflatex algorithm.tex
-%   convert -density 220 algorithm.pdf -trim +repage -bordercolor white \
-%           -border 16 algorithm.png
+%   pdftoppm -r 220 algorithm.pdf algorithm -png -singlefile
 \documentclass[11pt]{article}
-\usepackage[margin=1cm,paperwidth=22cm,paperheight=27cm]{geometry}
+\usepackage[margin=1cm,paperwidth=22cm,paperheight=29cm]{geometry}
 \usepackage{float}
 \usepackage[linesnumbered,ruled,vlined]{algorithm2e}
 \usepackage{amsmath,amssymb}
@@ -16,43 +16,67 @@
 \begin{document}
 \begin{algorithm}[H]
 \DontPrintSemicolon
-\caption{SPACeR Training --- as implemented (\texttt{spacer/train\_spacer.py}, post Test~18)}
+\caption{SPACeR Training --- as implemented (\texttt{spacer/train\_spacer.py}, post Test~22)}
 \KwIn{frozen reference $\pref$ (CAT-K \texttt{clsft\_E9} SMARTDecoder, centralized, full-scene);\
-      KL weight $\beta=0.1$;\ infraction weights $w_{\mathrm{coll}}=w_{\mathrm{off}}=0.75$;\
+      KL weight $\beta = 0.1$;\ infraction weights $w_{\mathrm{coll}}=w_{\mathrm{off}}=0.75$;\
       $\alpha=0,\ w_{\mathrm{goal}}=0$ (Variant~4);\
-      PPO hyperparameters (paper Table~A3): $\gamma=0.99$, $\lambda=0.95$, clip $0.2$, $c_{\mathrm{vf}}=0.3$, $c_{\mathrm{ent}}=10^{-4}$, grad-clip $0.5$, $4$ epochs $\times$ $16$ minibatches, Adam lr $3\times10^{-4}$, seed $42$.}
+      rollout-accumulation factor $K$ (\texttt{-{}-accum-k}; $K=46$ matches paper batch);\
+      paper Table~A3 PPO hyperparameters: $\gamma=0.99$, $\lambda=0.95$, clip $0.2$,
+      $c_{\mathrm{vf}}=0.3$, $c_{\mathrm{ent}}=10^{-4}$, grad-clip $0.5$,
+      $4$ epochs $\times$ $16$ minibatches, Adam lr $3\times10^{-4}$, seed $42$;\
+      \texttt{roadgraph\_top\_k}$=120$ (paper~\S{A.3}: cap road-context per agent).}
 \KwOut{trained decentralized policy $\pth$}
 \BlankLine
 initialise $\pth$ --- late-fusion MLP: 2048-token actor $+$ critic \tcp*{\texttt{TokenPolicy}}
 \For{each training iteration}{
-  $\mathcal{B} \leftarrow \emptyset$ \tcp*{rollout buffer}
-  \For{each of $W$ parallel worlds $(W \le 48)$}{
-    reset simulator; observe state $s_0$ and scene context $c$\;
-    \For{token-step $t = 0,1,\dots,T$}{
-      \ForEach{agent $i$}{$a_{i,t} \sim \pth(\cdot \mid o_{i,t})$ \tcp*{local ego-centric obs}}
-      decode tokens $\rightarrow$ poses; step the simulator\;
+  $\mathcal{B} \leftarrow \emptyset$ \tcp*{accumulation buffer (CPU)}
+  \For{$k = 1, 2, \dots, K$ \emph{micro-rollouts on-policy w.r.t. frozen $\theta$}}{
+    \If{$k > 1$ \textbf{or} \textnormal{outer-iter inject schedule fires}}{
+      \texttt{inject\_scenes($N$ fresh from pool)} \tcp*{partial / full refresh}
     }
+    \For{each of $W$ parallel worlds $(W \le 48)$}{
+      reset simulator; observe state $s_0$ and scene context $c$\;
+      \For{token-step $t = 0, 1, \dots, T$}{
+        \ForEach{agent $i$}{$a_{i,t} \sim \pth(\cdot \mid o_{i,t})$ \tcp*{local ego-centric obs}}
+        decode tokens $\rightarrow$ poses; step the simulator\;
+      }
+    }
+    $\pref(\cdot \mid s) \leftarrow$ one forward over the rolled scene $\;=\; p(a_t \mid a_{<t},\, c)$ \tcp*{\texttt{score\_ref}}
+    \ForEach{(agent, token-step)}{
+      $r_{h} \leftarrow \log \pref(a_t \mid a_{<t},\, c)$ \tcp*{Eq.~3 \ (logged only; $\alpha=0$)}
+      $r_{\mathrm{task}} \leftarrow -0.75\cdot\mathbf{1}[\mathrm{coll}] - 0.75\cdot\mathbf{1}[\mathrm{off}]$ \tcp*{Eq.~1, V4}
+      $D_{\mathrm{KL}} \leftarrow \sum_{a} \pth(a\mid o)\,\log\!\big(\pth(a\mid o)\,/\,\pref(a\mid s)\big)$ \tcp*{Eq.~5}
+      store $\langle o,\, a,\, r_{\mathrm{task}},\, \text{value},\, \log\pth\text{-logits},\, \pref\text{-logits}\rangle$\;
+    }
+    $A[r] \leftarrow \mathrm{GAE}(\gamma, \lambda)$ \tcp*{\texttt{\_gae}}
+    append flat per-sample tensors to $\mathcal{B}$ on CPU \tcp*{\texttt{\_collect}}
   }
-  $\pref(\cdot \mid s) \leftarrow$ one forward pass over the full rolled scene $\;=\; p(a_t \mid a_{<t},\, c)$ \tcp*{\texttt{score\_ref}}
-  \ForEach{(agent, token-step)}{
-    $r_{h} \leftarrow \log \pref(a_t \mid a_{<t},\, c)$ \tcp*{Eq.~3 \ (logged only; $\alpha=0$)}
-    $r_{\mathrm{task}} \leftarrow -0.75\cdot\mathbf{1}[\text{collision}] \;-\; 0.75\cdot\mathbf{1}[\text{off-road}]$ \tcp*{Eq.~1, Variant~4}
-    $D_{\mathrm{KL}} \leftarrow \sum_{a} \pth(a\mid o)\,\log\!\big(\pth(a\mid o)\,/\,\pref(a\mid s)\big)$ \tcp*{Eq.~5, closed-form}
-    store $\langle\, o,\ a,\ r_{\mathrm{task}},\ \text{value}\,\rangle$ in $\mathcal{B}$\;
-  }
-  $A[r] \leftarrow \mathrm{GAE}(\gamma,\lambda)$ over $\mathcal{B}$ \tcp*{advantages \quad \texttt{\_gae}}
-  \For{$4$ epochs $\times$ $16$ minibatches}{
-    $\mathcal{L}_{\mathrm{PPO}} \leftarrow$ clipped-surrogate $+\; c_{\mathrm{vf}}\cdot$value-loss $+\; c_{\mathrm{ent}}\cdot$entropy\;
-    $\mathcal{L}(\theta) \leftarrow -\,\mathcal{L}_{\mathrm{PPO}}(A[r]) \;+\; \beta\, D_{\mathrm{KL}}$ \tcp*{Eq.~2}
-    $\theta \leftarrow$ Adam step on $\nabla\mathcal{L}(\theta)$;\ grad-norm clip $0.5$\;
+  \For{$4$ epochs $\times$ $16$ minibatches over $\mathcal{B}$ \emph{(now $K\!\cdot\!W\!\cdot\!T\!\cdot\!N$ samples)}}{
+    move minibatch to GPU\;
+    $(\textit{newlp},\ \mathcal{H},\ V,\ \log\pth) \leftarrow \texttt{policy.forward\_with\_logits}(o, a)$ \tcp*{single backbone fwd}
+    $kl_{\mathrm{mb}} \leftarrow \sum_{a} \pth(a)\cdot\big(\log\pth - \log\pref\big)$ \tcp*{Eq.~5, recomputed}
+    $\mathcal{L}_{\mathrm{PPO}} \leftarrow$ clipped-surrogate(\textit{newlp}, $A[r]$, clip $0.2$) $+\; c_{\mathrm{vf}}\cdot$value-loss $-\; c_{\mathrm{ent}}\cdot\mathcal{H}$\;
+    $\mathcal{L}(\theta) \leftarrow \mathcal{L}_{\mathrm{PPO}} + \beta\cdot kl_{\mathrm{mb}}$ \tcp*{Eq.~2}
+    $\theta \leftarrow$ Adam step on $\nabla\mathcal{L}(\theta)$;\ grad-norm clip $0.5$ \tcp*{\texttt{\_ppo\_update}}
   }
 }
 \Return $\pth$\;
 \end{algorithm}
 
 \vspace{6pt}
-\noindent\footnotesize\textit{Deviations from the paper's Algorithm~1 are scale-only, not algorithmic:}
-$W \le 48$ (vs.\ 300) $\cdot$ \texttt{-{}-iters}-bounded $\sim2\times10^{7}$ env-steps (vs.\ $10^{9}$) $\cdot$
-$\beta=0.1$ (vs.\ 0.01; both in the paper's robust band) $\cdot$ 2\,Hz control (vs.\ 5\,Hz).
-The algorithm itself --- Eqs.\ 1/2/3/5, PufferLib PPO, Variant~4 --- is faithfully reproduced.
+\noindent\footnotesize\textit{Deviations from the paper's Algorithm~1.}
+$W \le 48$ (paper~300, RTX~3060 ceiling). $K\!=\!46$ rollout-accumulation gives
+samples/update $=\!126{,}576$ \emph{(96\,\% of paper's $131{,}072$)} ---
+per-update batch is now paper-faithful. Total env-steps still $\sim\!10^{7}$
+(paper~$10^{9}$, \emph{$\sim\!160\times$ short, compute-bound}).
+$\beta\!=\!0.1$ (paper~$0.01$; both in paper's robust band).
+$2\,$Hz control (paper~$5\,$Hz, \texttt{clsft\_E9} native tokenisation).
+Vocab~$2{,}048$ (paper~$\sim\!200$, locked by the public \texttt{clsft\_E9}
+checkpoint --- candidate cause of the closed-form KL anchor being too soft
+per token).
+\texttt{roadgraph\_top\_k}$=120$ now matches paper~\S{A.3}.
+The algorithm itself --- Eqs.\ 1/2/3/5, PufferLib PPO, Variant~4, rollout
+accumulation, single-forward update --- is faithfully reproduced; the
+remaining gaps are total env-steps and the vocab mismatch (see \texttt{test.md}
+Tests~20/21/22).
 \end{document}
