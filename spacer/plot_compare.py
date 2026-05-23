@@ -50,9 +50,13 @@ if not os.path.isabs(out) and not out.startswith(("plots/", "./", "../")):
 
 runs = []
 for arg in sys.argv[2:]:
-    label, path = arg.split(":", 1)
+    parts = arg.split(":")
+    label, path = parts[0], parts[1]
+    # optional 3rd field = samples_per_iter (for K-accum / multi-batch runs);
+    # if given for all runs, x-axis becomes env-steps × 10⁶ instead of iter
+    spi = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
     its, data = parse_log(path)
-    runs.append((label, its, data))
+    runs.append((label, its, data, spi))
 
 panels = [("KL",     "D_KL(π_θ ‖ π_ref)        [Fig A1 — left]"),
           ("r_h",    "Log-Likelihood  log π_ref(aₜ)   [Fig A1 — mid]"),
@@ -66,18 +70,19 @@ panels = [("KL",     "D_KL(π_θ ‖ π_ref)        [Fig A1 — left]"),
 # distinct, colour-blind-friendly palette for the runs
 COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"]
 
+use_env = all(r[3] > 0 for r in runs)         # env-step x-axis if all given
 fig, axes = plt.subplots(2, 4, figsize=(19, 8.4))
 for ax, p in zip(axes.flat, panels):
     if p is None:
         ax.set_visible(False)
         continue
     k, title = p
-    for (label, its, data), c in zip(runs, COLOURS):
+    for (label, its, data, spi), c in zip(runs, COLOURS):
         y = data[k]
-        ax.plot(its, y, color=c, lw=0.4, alpha=0.18)        # raw per-iter
-        ax.plot(its, mavg(y), color=c, lw=1.7, label=label) # 25-iter MA
+        x = its * spi / 1e6 if use_env else its
+        ax.plot(x, y, color=c, lw=1.4, label=label)         # raw per-iter
     ax.set_title(title, fontsize=10)
-    ax.set_xlabel("iteration")
+    ax.set_xlabel("env-steps × 10⁶" if use_env else "iteration")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="best", framealpha=0.85)
 

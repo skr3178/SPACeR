@@ -69,8 +69,10 @@ for ax, p in zip(axes.flat, panels):
         continue
     k, title, c = p
     y = data[k]
-    ax.plot(its, y, color=c, lw=0.5, alpha=0.35)
-    ax.plot(its, mavg(y), color=c, lw=1.9)
+    # raw per-iter only — moving-average overlay removed (zero-padding
+    # boundary artifact in `mode='same'` convolution distorted the early
+    # and late tails at small iter counts).
+    ax.plot(its, y, color=c, lw=1.4)
     ax.set_title(title, fontsize=10)
     ax.set_xlabel("iteration")
     ax.grid(alpha=0.3)
@@ -79,7 +81,7 @@ fig.suptitle(
     f"SPACeR long run — Variant 4 (KL + r_inf)   ·   "
     f"α = {ALPHA}   β = {beta}   ·   W = {world}   ·   {len(its)} iters\n"
     f"row 1 = paper Figure A1 panels   ·   row 2 = our PPO / Variant-4 "
-    f"diagnostics incl. total loss   (raw + 25-iter moving avg)", fontsize=11)
+    f"diagnostics incl. total loss   (raw per-iter values)", fontsize=11)
 fig.tight_layout(rect=[0, 0, 1, 0.95])
 fig.savefig(out, dpi=110)
 print(f"wrote {out}  ({len(its)} iters, α={ALPHA} β={beta} W={world})")
