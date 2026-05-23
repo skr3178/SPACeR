@@ -1,0 +1,65 @@
+{
+  "ckpt": "/spacer/checkpoints/bsweep_b1.0/ckpt_b1.0_W24_it001500.pt",
+  "config": {
+    "scene_batches": 11,
+    "worlds": 8,
+    "rollouts_per_scene": 6,
+    "dynamics": "state",
+    "collision_behavior": "stop",
+    "variant": "V4 (KL + r_inf)"
+  },
+  "arms": {
+    "trained": {
+      "collision_rate": 0.08937742106729385,
+      "off_road_rate": 0.14442668663281386,
+      "goal_rate": 0.00796577205994364,
+      "r_task_mean": -0.07971029793561407,
+      "min_ade_m": 29.62466597508893,
+      "ade_completion_rate": 0.9863981571123326,
+      "r_h_mean": -3.1656745347109707,
+      "kl_mean": 0.6784285090186379,
+      "entropy_mean": 5.179536949504506,
+      "wall_time_s": 303.06940484046936,
+      "throughput_scenarios_per_s": 1.7421751967273975,
+      "n_scenes": 88,
+      "n_rollouts": 528,
+      "ckpt_it": 1500,
+      "ckpt_meta": {
+        "beta": 1.0,
+        "alpha": 0.0,
+        "n_worlds": 24,
+        "lr": 0.0003
+      }
+    },
+    "random": {
+      "collision_rate": 0.21251226148822086,
+      "off_road_rate": 0.5522538857026533,
+      "goal_rate": 0.11565450497084494,
+      "r_task_mean": -0.37975622081395355,
+      "min_ade_m": 21.57229724987873,
+      "ade_completion_rate": 0.6870320614419614,
+      "r_h_mean": -2.810884703289379,
+      "kl_mean": 3.2344176986000757,
+      "entropy_mean": 7.6246185302734375,
+      "wall_time_s": 290.2239181995392,
+      "throughput_scenarios_per_s": 1.8192849275674838,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    },
+    "ref": {
+      "collision_rate": 0.07727881820138657,
+      "off_road_rate": 0.2479744807563045,
+      "goal_rate": 0.3016241885947459,
+      "r_task_mean": NaN,
+      "min_ade_m": 4.432022419124295,
+      "ade_completion_rate": 0.7363007641657829,
+      "r_h_mean": -1.7396629001155046,
+      "kl_mean": NaN,
+      "entropy_mean": 1.3746553298198814,
+      "wall_time_s": 373.37759375572205,
+      "throughput_scenarios_per_s": 1.414118063938882,
+      "n_scenes": 88,
+      "n_rollouts": 528
+    }
+  }
+}

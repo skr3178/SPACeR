@@ -1,13 +1,16 @@
 """Visualise one raw GPUDrive scene file (no sim / no CUDA needed).
 
-    docker exec spacer-dev python /spacer/viz_scene.py <scene.json> [<out.png>]
+    python3 spacer/viz_scene.py <scene.json> [<out.png>]   (run on host)
+
+Default output → the repo-root `plots/` folder (images kept out of logs/).
+Scene files: /home/skr/gpudrive_data/{training/group_0,validation}/*.json
 
 Parses a single GPUDrive-processed WOMD scene JSON and renders a top-down map:
 road elements (coloured by type), every agent's logged trajectory, each agent's
 initial bounding box (oriented by heading), and the ego goal. The ego / self-
 driving car (metadata.sdc_track_index) is drawn in red.
 """
-import sys, json
+import sys, json, os
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -16,7 +19,11 @@ from matplotlib.patches import Rectangle
 from matplotlib.lines import Line2D
 
 scene = sys.argv[1]
-out = sys.argv[2] if len(sys.argv) > 2 else "/spacer/logs/scene_viz.png"
+# default output → the repo-root plots/ folder (kept separate from logs/)
+_PLOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plots")
+os.makedirs(_PLOTS, exist_ok=True)
+out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(_PLOTS,
+                                                         "scene_viz.png")
 d = json.load(open(scene))
 
 # --- roads: one polyline per element, coloured / styled by type ---

@@ -1184,6 +1184,120 @@ trajectories drift ~26 m), not the training set.
 
 ---
 
+## Test 21 — β-sweep with paper-style scene injection on 10k dataset  ⚠️ ALL DEGENERATE (scale-bound)
+
+**Setup.** Three separate Variant-4 runs varying only β; everything else
+fixed: α=0, w_goal=0, W=24, 1,500 iters, full-resample injection (24/24
+worlds refreshed every iteration) over a 5,000-scene pool drawn from the new
+10k GPUDrive training set (`/data_new/training/group_0`). The injection
+feature (`inject_scenes` / `swap_data_batch`-per-iter) was added to
+`train_spacer.py` because Test 20 had revealed that the prior loop never
+resampled — Test 20 effectively trained on only the first 24 scenes of the
+pool. Phase-A eval used the new 941-scene validation split
+(`/data_new/validation`) for the first time, via a `--data-root` arg added
+to `eval_quick.py`.
+
+| Run | β  | Final r_task | Final KL | Final r_h | Final entropy | Total loss |
+|-----|----|---|---|---|---|---|
+| b0.01 | 0.01 | −0.039 | 1.30 | −3.13 | 4.99 | 0.20 |
+| b0.10 | 0.10 | −0.020 | 0.71 | −3.20 | 5.39 | 0.19 |
+| b1.00 | 1.00 | −0.111 | 0.70 | −2.94 | 5.14 | 1.18 |
+
+**Training-curve reading** — overlay in `plots/bsweep_compare.png` (3 runs)
+and `plots/bsweep_compare_with_test20.png` (3 + Test 20 clipped to 1500 it):
+- KL is a pure β-effect: β=0.01 sits ~1.3, β=0.10 settles 0.71, β=1.00
+  hits the *same* floor as β=0.10 (~0.70) — a 10× stronger anchor cannot
+  push KL below ~0.7 with our small policy net.
+- β=1.00 over-regularises: worst r_task (3× more infraction signal), value
+  loss elevated (1.76), highest total loss (β·KL dominates).
+- β=0.10 is the curve-level sweet spot (best r_task, lowest loss, KL anchored).
+- **Test 20-vs-b0.10 comparison (same β, injection on/off) confirmed that
+  Test 20's rising r_h was scene-memorization**: with injection r_h sits
+  flat at ~−2.9 to −3.2; without injection (Test 20) it climbed to −1.85
+  because π_θ scored against the same 24 scenes every iter.
+
+**Phase-A eval** (88 scenes × 6 rollouts × 3 arms; new 941-scene validation):
+
+| Metric (trained π_θ) | β=0.01 | β=0.10 | β=1.00 | random | ref |
+|---|---|---|---|---|---|
+| collision ↓ | **0.036** | 0.047 | 0.089 | ~0.22 | 0.077 |
+| off-road ↓ | **0.020** | 0.039 | 0.144 | 0.55 | 0.25 |
+| **goal_rate ↑** | 0.028 | 0.024 | **0.008** | ~0.12 | **0.300** |
+| **minADE (m) ↓** | **27.16** | 27.41 | 29.62 | ~22 | **4.6–4.9** |
+
+**Verdict — all three land in the same degenerate "safe-but-lost" optimum
+as Test 20, with the same signature:** infraction-avoidance ≪ random
+(loop is optimising r_inf correctly), but **goal_rate ~0.02 vs ref 0.30**
+and **minADE ~27–30 m vs ref ~4.7 m**. The β-sweep moves us *within* the
+degenerate basin — it does not escape it. **The scene injection (5,000
+rotating scenes vs Test 20's 24) did not help either** — same outcome.
+
+**β-trade-off seen at eval — weaker anchor wins on driving:**
+- β=0.01 (weak) → best of the three on collision/off-road/r_task and
+  marginally best on minADE.
+- β=1.00 (strong) → *worst* on every driving metric. The strong anchor
+  pins the token distribution near π_ref (best r_h) but it does **not**
+  produce better closed-loop trajectories. Over-regularisation degrades
+  the policy's ability to optimise r_task and reach goals.
+
+**Headline diagnosis: scale-mismatch, not algorithm or reward.** The full
+loop is faithful (PPO Table A3, Variant 4 reward, closed-form KL, paper-
+style injection). The gap to the paper is the compute scale:
+
+|  | Paper (§A.3 / Table A3) | Ours | Ratio |
+|---|---|---|---|
+| Total env-steps | 1 × 10⁹ | 2.9 × 10⁶ | ~345× |
+| Parallel worlds (W) | 300 | 24 | ~12.5× |
+| PPO minibatch size | 8,192 | ~120 | ~68× |
+| Per env-step entropy collapse | ~3 × 10⁻⁹ nats/step | ~7.6 × 10⁻⁷ nats/step | **~250× faster** |
+
+At ~68× smaller minibatches the per-update gradient is noisier and the
+effective step size is far more aggressive — the policy entropy collapses
+~250× faster *per env-step* than the paper. We reach a plateau by
+~10⁵ env-steps, ~1000× earlier than the paper's stabilisation point
+(~2 × 10⁸). The plateau we reach is degenerate; the paper's is good.
+
+**What we ruled out** (cumulatively, with controls):
+- ✅ Dataset size (Test 20 train-split control: zero train/val gap).
+- ✅ Control cadence (Test 20 ref arm at 2 Hz drives well: minADE 4.7 m).
+- ✅ Fixed-batch bug (Test 21 injection: 5,000 rotating scenes — same outcome).
+- ✅ Anchor strength tuning (β-sweep 0.01/0.10/1.00 — none escape).
+
+**What remains to test (potential mitigations, not yet run):**
+- Increase `ent_coef` (1e-4 → 1e-3 or 1e-2) — at our tiny batch the paper's
+  entropy coefficient may be too low to preserve exploration.
+- Lower learning rate (3e-4 → 1e-4) — slow the per-update aggressiveness.
+- Reduce PPO update epochs (4 → 2) — less aggressive policy fitting per iter.
+None of these change the algorithm; they're per-batch-size recalibrations.
+
+**Files:**
+- `spacer/train_spacer.py` — `build_env(data_root=…)`, `_scene_pool`,
+  `inject_scenes`, `run(... inject_n, inject_every)`, CLI `--data-root`,
+  `--inject-n`, `--inject-every`.
+- `spacer/eval_quick.py` — `--data-root` (so eval can target `/data_new/validation`).
+- `spacer/plot_curves.py` — added total-loss panel (2×4 layout).
+- `spacer/plot_compare.py` — **NEW**: overlay multiple runs in one figure
+  (β-sweep comparison).
+- `spacer/viz_scene.py` — **NEW**: render a raw GPUDrive scene JSON (roads +
+  agent trajectories + ego goal); no sim/CUDA needed.
+- `checkpoints/bsweep_b{0.01,0.1,1.0}/ckpt_b{β}_W24_it001500.pt` — final
+  checkpoints (6 ckpts each, every 250 iters).
+- `eval_runs/ckpt_b{0.01,0.1,1.0}_W24_it001500/quick_metrics.json`.
+- `plots/` (NEW root-level folder) — `bsweep_b0.01_curves.png`,
+  `bsweep_b0.{1,1.0}_it1500_curves.png`, `bsweep_compare.png`,
+  `bsweep_compare_with_test20.png`, `FigureA1_with_grid.png` (paper figure
+  with data-aligned grid overlay for value comparison).
+
+**Operational note.** The `spacer-dev` container lost GPU access twice
+during this experiment (after long-running processes exited) — a known
+nvidia-container-toolkit + systemd cgroup interaction. Symptom: host
+GPU fine, container `torch.cuda.is_available()=False`. Fix each time:
+recreate the container (`docker rm -f spacer-dev && docker run --gpus all
+... catk-spacer:latest`). All host-mounted artefacts (code, checkpoints,
+logs) persist across recreates.
+
+---
+
 ## Combined status
 
 | Piece | Status |
@@ -1206,6 +1320,7 @@ trajectories drift ~26 m), not the training set.
 | **PPO port + Table A3 alignment** | ✅ **Test 18** — compact PG replaced with the paper's PufferLib PPO; 13 algorithmic hyperparams matched verbatim; smoke passes; 200-iter validation OK. |
 | **r_task reward-weight bug** | ✅ **Test 19 — FIXED**: `get_rewards()` took weights as kwarg-defaults (−0.5/+1.0/−0.5), ignored `EnvConfig`. Tests 12–18 ran goal-reward-ON (≈ "Goal + KL"), not Variant 4. `rollout()` now passes `env.config` weights ⇒ first genuine Variant 4 run is the post-fix long run. |
 | **Genuine Variant 4 long run + Phase-A eval** | ⚠️ **Test 20** — V4 loop optimizes r_inf (collision/off-road ≪ random, ≤ teacher) but converges to a **degenerate safe-but-lost policy**: goal_rate 0.019 (< random 0.136), minADE 25 m vs teacher 4.5 m. Pipeline correct; reward config + scale insufficient for good driving. Train-split control (addendum) shows **zero train-vs-val gap ⇒ dataset size exonerated**; cause is the reward/KL-anchor, not data. |
+| **β-sweep with paper-style scene injection (10k dataset)** | ⚠️ **Test 21** — three V4 runs at β ∈ {0.01, 0.10, 1.00}, full-resample injection (5,000 rotating scenes), 1,500 iters each. All three **land in the same degenerate optimum as Test 20** (goal ~0.02, minADE ~27–30 m vs teacher 4.7 m); β=0.01 marginally best on driving, β=1.00 worst (over-regularised). **Injection ruled out**, **anchor strength ruled out** ⇒ gating issue is **compute scale**, not algorithm/reward: our minibatch is ~68× smaller than the paper's and entropy collapses ~250× faster per env-step. |
 | Convergent paper-scale run | ✗ out of reach on 3060 (documented ceiling) |
 
 **The entire SPACeR mechanism is implemented, numerically exact, and

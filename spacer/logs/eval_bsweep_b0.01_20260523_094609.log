@@ -1,0 +1,79 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-23 04:16:12.491662: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-23 04:16:12.499302: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779509772.508086      74 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779509772.510763      74 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779509772.518463      74 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779509772.518477      74 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779509772.518480      74 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779509772.518483      74 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-23 04:16:12.520698: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Compiling GPU engine code:
+/gpudrive/external/madrona/src/mw/device/memory.cpp
+/gpudrive/external/madrona/src/mw/device/state.cpp
+/gpudrive/external/madrona/src/mw/device/crash.cpp
+/gpudrive/external/madrona/src/mw/device/consts.cpp
+/gpudrive/external/madrona/src/mw/device/taskgraph.cpp
+/gpudrive/external/madrona/src/mw/device/taskgraph_utils.cpp
+/gpudrive/external/madrona/src/mw/device/sort_archetype.cpp
+/gpudrive/external/madrona/src/mw/device/host_print.cpp
+/gpudrive/external/madrona/src/mw/../common/hashmap.cpp
+/gpudrive/external/madrona/src/mw/../common/navmesh.cpp
+/gpudrive/external/madrona/src/mw/../core/base.cpp
+/gpudrive/external/madrona/src/mw/../physics/physics.cpp
+/gpudrive/external/madrona/src/mw/../physics/geo.cpp
+/gpudrive/external/madrona/src/mw/../physics/xpbd.cpp
+/gpudrive/external/madrona/src/mw/../physics/tgs.cpp
+/gpudrive/external/madrona/src/mw/../physics/narrowphase.cpp
+/gpudrive/external/madrona/src/mw/../physics/broadphase.cpp
+/gpudrive/external/madrona/src/mw/../render/ecs_system.cpp
+/gpudrive/src/sim.cpp
+/gpudrive/src/level_gen.cpp
+/gpudrive/src/level_gen.cpp(315): warning #177-D: function "madrona_gpudrive::createFloorPlane" was declared but never referenced
+  static void createFloorPlane(Engine &ctx)
+              ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+
+
+Initialization finished
+[eval_quick] split: /data_new/validation
+[eval_quick] env: W=8 scene-batches=12 rollouts/scene=6 obs_dim=2984
+[eval_quick] total scenes=96 total rollouts/arm=576
+[eval_quick] trained ckpt: /spacer/checkpoints/bsweep_b0.01/ckpt_b0.01_W24_it001500.pt (it=1500)
+[eval_quick] ref arm ON — π_ref (clsft_E9) closed-loop
+[eval_quick] batch 1/12 done
+[eval_quick] batch 2/12 done
+[eval_quick] batch 3/12 done
+[eval_quick] batch 4/12 done
+[eval_quick] batch 5/12 done
+[eval_quick] batch 6/12 done
+[eval_quick] batch 7/12 done
+[eval_quick] batch 8/12 done
+[eval_quick] batch 9/12 done
+[eval_quick] batch 10/12 done
+[eval_quick] batch 11/12 done
+[eval_quick] data loader exhausted after 11 batches — stopping early
+[eval_quick] wrote /spacer/eval_runs/ckpt_b0.01_W24_it001500/quick_metrics.json
+
+--- summary  (↓ coll/off/r_task/minADE   ↑ goal/r_h/entropy/thru/compl) ---
+metric                            trained       random          ref      Δ (t-r)
+--------------------------------------------------------------------------------
+collision_rate                     0.0357       0.2310       0.0774      -0.1952
+off_road_rate                      0.0204       0.5403       0.2553      -0.5199
+goal_rate                          0.0275       0.1209       0.2997      -0.0934
+min_ade_m                         27.1643      22.5911       4.8568      +4.5732
+ade_completion_rate                0.9946       0.6734       0.7347      +0.3212
+r_task_mean                       -0.0212      -0.3849          nan      +0.3638
+r_h_mean                          -3.2746      -2.7148      -1.7397      -0.5598
+kl_mean                            1.1949       3.3705          nan      -2.1756
+entropy_mean                       4.9848       7.6246       1.3747      -2.6399
+throughput_scenarios_per_s         1.7298       1.8268       1.4121      -0.0970
+wall_time_s                      305.2365     289.0252     373.9161     +16.2113

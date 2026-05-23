@@ -1,6 +1,8 @@
 """Plot SPACeR training curves from a run log.
 
-    docker exec spacer-dev python /spacer/plot_curves.py <log> [<out.png>]
+    python3 spacer/plot_curves.py <log> [<out.png>]   (run on host)
+
+Default output → the repo-root `plots/` folder (images kept out of logs/).
 
 Layout mirrors the paper's Figure A1:
   ROW 1 — the three Fig A1 panels: D_KL, Log-Likelihood, Entropy.
@@ -11,14 +13,18 @@ so this shows that single point — α and β are annotated in the title.
 Parses the per-iter `[β=… W=…] itNNN: r_task=… r_h=… KL=… H=… pg=… vL=…
 loss=… |g|=…` lines (raw + moving average). Re-runnable any time.
 """
-import sys, re
+import sys, re, os
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 log = sys.argv[1]
-out = sys.argv[2] if len(sys.argv) > 2 else "/spacer/logs/training_curves.png"
+# default output → the repo-root plots/ folder (kept separate from logs/)
+_PLOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plots")
+os.makedirs(_PLOTS, exist_ok=True)
+out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(_PLOTS,
+                                                         "training_curves.png")
 
 pat = re.compile(
     r"\[(?:ABL )?β=([\d.]+) W=(\d+)\] it(\d+): "
