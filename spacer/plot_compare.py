@@ -68,7 +68,8 @@ panels = [("KL",     "D_KL(π_θ ‖ π_ref)        [Fig A1 — left]"),
           ("g",      "grad-norm |g| pre-clip")]
 
 # distinct, colour-blind-friendly palette for the runs
-COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"]
+COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
+           "tab:brown", "tab:pink", "tab:olive", "tab:cyan", "k"]
 
 use_env = all(r[3] > 0 for r in runs)         # env-step x-axis if all given
 fig, axes = plt.subplots(2, 4, figsize=(19, 8.4))

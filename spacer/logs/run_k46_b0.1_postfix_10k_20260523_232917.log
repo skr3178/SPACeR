@@ -1,0 +1,109 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-23 17:59:20.338239: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-23 17:59:20.345688: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779559160.354239    1465 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779559160.356836    1465 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779559160.364535    1465 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779559160.364547    1465 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779559160.364549    1465 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779559160.364551    1465 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-23 17:59:20.366801: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+M5b faithful run: iters=80 scenes=10000 worlds=24 α=0.0 β=0.1 (exact per-agent KL, differentiable)
+Initialization finished
+  [inject] scene injection ON: 24/24 worlds refreshed every 1 iter(s); pool=10000 scenes (/data_new/training/group_0); accum_k=46 ⇒ 46× injections per iter
+  [accum] rollout-accumulation K=46 → per-update samples = K × W × T × (cmask agents); minibatches still PPO_N_MINIBATCH=16, lr/coefs unchanged
+  [scale] samples/update=111712  (T=16, N≈6982, K=46, minibatch≈6982)
+  [tokens] iter 0 top-5: [(1839, 89), (1052, 79), (1989, 79), (826, 79), (806, 78)]
+  [β=0.1 W=24] it00: r_task=-0.327 r_h=-2.831 KL=3.268 H=7.625 pg=-0.013 vL=3.102 loss=+1.237 |g|=0.80 valid=0.80
+  [β=0.1 W=24] it01: r_task=-0.322 r_h=-2.852 KL=3.135 H=7.611 pg=-0.008 vL=3.238 loss=+1.270 |g|=1.20 valid=0.80
+  [β=0.1 W=24] it02: r_task=-0.316 r_h=-2.971 KL=2.991 H=7.586 pg=-0.009 vL=3.072 loss=+1.201 |g|=2.23 valid=0.80
+  [β=0.1 W=24] it03: r_task=-0.299 r_h=-3.018 KL=2.807 H=7.536 pg=-0.004 vL=3.082 loss=+1.188 |g|=4.36 valid=0.80
+  [β=0.1 W=24] it04: r_task=-0.286 r_h=-2.926 KL=2.585 H=7.418 pg=-0.005 vL=3.055 loss=+1.156 |g|=6.20 valid=0.80
+  [β=0.1 W=24] it05: r_task=-0.273 r_h=-3.116 KL=2.432 H=7.309 pg=-0.004 vL=2.967 loss=+1.116 |g|=2.82 valid=0.80
+  [β=0.1 W=24] it06: r_task=-0.266 r_h=-3.116 KL=2.238 H=7.162 pg=-0.004 vL=2.977 loss=+1.100 |g|=13.28 valid=0.80
+  [β=0.1 W=24] it07: r_task=-0.251 r_h=-3.072 KL=2.073 H=7.027 pg=-0.004 vL=2.864 loss=+1.051 |g|=4.64 valid=0.80
+  [β=0.1 W=24] it08: r_task=-0.243 r_h=-3.169 KL=1.961 H=6.888 pg=-0.007 vL=2.852 loss=+1.035 |g|=12.83 valid=0.81
+  [β=0.1 W=24] it09: r_task=-0.229 r_h=-3.150 KL=1.843 H=6.742 pg=-0.007 vL=2.718 loss=+0.984 |g|=1.89 valid=0.80
+  [β=0.1 W=24] it10: r_task=-0.212 r_h=-3.223 KL=1.758 H=6.610 pg=-0.007 vL=2.555 loss=+0.929 |g|=1.21 valid=0.80
+  [β=0.1 W=24] it11: r_task=-0.201 r_h=-3.299 KL=1.687 H=6.480 pg=-0.005 vL=2.511 loss=+0.911 |g|=11.67 valid=0.80
+  [β=0.1 W=24] it12: r_task=-0.185 r_h=-3.244 KL=1.607 H=6.388 pg=-0.005 vL=2.362 loss=+0.860 |g|=8.14 valid=0.80
+  [β=0.1 W=24] it13: r_task=-0.186 r_h=-3.183 KL=1.559 H=6.264 pg=-0.007 vL=2.320 loss=+0.841 |g|=12.32 valid=0.80
+  [β=0.1 W=24] it14: r_task=-0.168 r_h=-3.120 KL=1.530 H=6.231 pg=-0.006 vL=2.234 loss=+0.813 |g|=0.87 valid=0.80
+  [β=0.1 W=24] it15: r_task=-0.159 r_h=-3.332 KL=1.508 H=6.156 pg=-0.005 vL=2.129 loss=+0.782 |g|=11.23 valid=0.79
+  [β=0.1 W=24] it16: r_task=-0.151 r_h=-3.357 KL=1.465 H=6.113 pg=-0.007 vL=2.022 loss=+0.744 |g|=6.11 valid=0.80
+  [β=0.1 W=24] it17: r_task=-0.136 r_h=-3.528 KL=1.453 H=6.092 pg=-0.005 vL=1.893 loss=+0.706 |g|=5.92 valid=0.79
+  [β=0.1 W=24] it18: r_task=-0.136 r_h=-3.224 KL=1.423 H=6.010 pg=-0.006 vL=1.887 loss=+0.700 |g|=4.87 valid=0.80
+  [β=0.1 W=24] it19: r_task=-0.119 r_h=-3.272 KL=1.398 H=5.987 pg=-0.006 vL=1.675 loss=+0.635 |g|=13.16 valid=0.80
+  [β=0.1 W=24] it20: r_task=-0.113 r_h=-3.138 KL=1.365 H=5.916 pg=-0.004 vL=1.611 loss=+0.614 |g|=2.14 valid=0.80
+  [β=0.1 W=24] it21: r_task=-0.105 r_h=-3.280 KL=1.357 H=5.927 pg=-0.007 vL=1.518 loss=+0.583 |g|=7.91 valid=0.80
+  [β=0.1 W=24] it22: r_task=-0.102 r_h=-3.297 KL=1.335 H=5.923 pg=-0.005 vL=1.468 loss=+0.567 |g|=5.51 valid=0.80
+  [β=0.1 W=24] it23: r_task=-0.095 r_h=-3.335 KL=1.314 H=5.877 pg=-0.004 vL=1.415 loss=+0.550 |g|=7.21 valid=0.80
+  [β=0.1 W=24] it24: r_task=-0.089 r_h=-3.302 KL=1.289 H=5.825 pg=-0.003 vL=1.335 loss=+0.525 |g|=4.72 valid=0.80
+  [ckpt] saved /spacer/checkpoints/k46_b0.1_postfix_10k/ckpt_b0.1_W24_it000025.pt
+  [β=0.1 W=24] it25: r_task=-0.083 r_h=-3.158 KL=1.259 H=5.726 pg=-0.002 vL=1.264 loss=+0.502 |g|=19.02 valid=0.81
+  [β=0.1 W=24] it26: r_task=-0.081 r_h=-3.204 KL=1.253 H=5.681 pg=-0.005 vL=1.200 loss=+0.479 |g|=11.59 valid=0.80
+  [β=0.1 W=24] it27: r_task=-0.069 r_h=-3.370 KL=1.250 H=5.688 pg=-0.003 vL=1.018 loss=+0.426 |g|=4.13 valid=0.79
+  [β=0.1 W=24] it28: r_task=-0.071 r_h=-3.163 KL=1.233 H=5.659 pg=-0.004 vL=1.105 loss=+0.450 |g|=3.71 valid=0.80
+  [β=0.1 W=24] it29: r_task=-0.061 r_h=-3.184 KL=1.199 H=5.667 pg=-0.003 vL=0.925 loss=+0.393 |g|=5.81 valid=0.81
+  [β=0.1 W=24] it30: r_task=-0.065 r_h=-3.058 KL=1.191 H=5.648 pg=-0.005 vL=1.025 loss=+0.421 |g|=10.89 valid=0.81
+  [β=0.1 W=24] it31: r_task=-0.059 r_h=-3.165 KL=1.187 H=5.646 pg=-0.005 vL=0.922 loss=+0.390 |g|=1.54 valid=0.81
+  [β=0.1 W=24] it32: r_task=-0.056 r_h=-3.204 KL=1.180 H=5.624 pg=-0.004 vL=0.849 loss=+0.368 |g|=0.50 valid=0.79
+  [β=0.1 W=24] it33: r_task=-0.052 r_h=-3.225 KL=1.157 H=5.601 pg=-0.003 vL=0.799 loss=+0.352 |g|=12.86 valid=0.81
+  [β=0.1 W=24] it34: r_task=-0.049 r_h=-3.169 KL=1.161 H=5.602 pg=-0.004 vL=0.741 loss=+0.333 |g|=8.78 valid=0.80
+  [β=0.1 W=24] it35: r_task=-0.050 r_h=-3.162 KL=1.162 H=5.607 pg=-0.005 vL=0.788 loss=+0.347 |g|=2.12 valid=0.81
+  [β=0.1 W=24] it36: r_task=-0.051 r_h=-3.086 KL=1.151 H=5.606 pg=-0.005 vL=0.799 loss=+0.349 |g|=2.63 valid=0.80
+  [β=0.1 W=24] it37: r_task=-0.043 r_h=-3.082 KL=1.140 H=5.600 pg=-0.005 vL=0.657 loss=+0.306 |g|=1.24 valid=0.80
+  [β=0.1 W=24] it38: r_task=-0.042 r_h=-3.107 KL=1.133 H=5.591 pg=-0.005 vL=0.640 loss=+0.300 |g|=5.74 valid=0.81
+  [β=0.1 W=24] it39: r_task=-0.047 r_h=-3.240 KL=1.139 H=5.590 pg=-0.005 vL=0.700 loss=+0.318 |g|=4.29 valid=0.80
+  [β=0.1 W=24] it40: r_task=-0.042 r_h=-3.152 KL=1.116 H=5.538 pg=-0.004 vL=0.653 loss=+0.303 |g|=5.53 valid=0.81
+  [β=0.1 W=24] it41: r_task=-0.040 r_h=-3.169 KL=1.122 H=5.519 pg=-0.005 vL=0.631 loss=+0.296 |g|=6.02 valid=0.79
+  [β=0.1 W=24] it42: r_task=-0.036 r_h=-3.091 KL=1.103 H=5.496 pg=-0.004 vL=0.554 loss=+0.272 |g|=6.68 valid=0.79
+  [β=0.1 W=24] it43: r_task=-0.035 r_h=-3.162 KL=1.099 H=5.501 pg=-0.004 vL=0.551 loss=+0.271 |g|=3.54 valid=0.80
+  [β=0.1 W=24] it44: r_task=-0.036 r_h=-3.149 KL=1.096 H=5.483 pg=-0.005 vL=0.545 loss=+0.268 |g|=6.26 valid=0.80
+  [β=0.1 W=24] it45: r_task=-0.039 r_h=-3.109 KL=1.119 H=5.495 pg=-0.006 vL=0.590 loss=+0.283 |g|=4.30 valid=0.80
+  [β=0.1 W=24] it46: r_task=-0.033 r_h=-3.162 KL=1.107 H=5.517 pg=-0.005 vL=0.529 loss=+0.265 |g|=4.20 valid=0.80
+  [β=0.1 W=24] it47: r_task=-0.035 r_h=-2.998 KL=1.102 H=5.499 pg=-0.005 vL=0.548 loss=+0.269 |g|=6.13 valid=0.80
+  [β=0.1 W=24] it48: r_task=-0.034 r_h=-3.134 KL=1.109 H=5.475 pg=-0.005 vL=0.526 loss=+0.263 |g|=10.60 valid=0.81
+  [β=0.1 W=24] it49: r_task=-0.033 r_h=-3.010 KL=1.103 H=5.462 pg=-0.005 vL=0.520 loss=+0.261 |g|=1.48 valid=0.81
+  [ckpt] saved /spacer/checkpoints/k46_b0.1_postfix_10k/ckpt_b0.1_W24_it000050.pt
+  [β=0.1 W=24] it50: r_task=-0.035 r_h=-3.069 KL=1.103 H=5.444 pg=-0.005 vL=0.548 loss=+0.269 |g|=6.78 valid=0.80
+  [β=0.1 W=24] it51: r_task=-0.037 r_h=-3.059 KL=1.107 H=5.439 pg=-0.006 vL=0.575 loss=+0.277 |g|=3.03 valid=0.80
+  [β=0.1 W=24] it52: r_task=-0.034 r_h=-3.147 KL=1.103 H=5.428 pg=-0.006 vL=0.498 loss=+0.254 |g|=7.33 valid=0.80
+  [β=0.1 W=24] it53: r_task=-0.035 r_h=-3.088 KL=1.099 H=5.413 pg=-0.005 vL=0.527 loss=+0.263 |g|=0.60 valid=0.80
+  [β=0.1 W=24] it54: r_task=-0.032 r_h=-3.060 KL=1.089 H=5.402 pg=-0.005 vL=0.481 loss=+0.248 |g|=0.56 valid=0.80
+  [β=0.1 W=24] it55: r_task=-0.033 r_h=-3.000 KL=1.094 H=5.382 pg=-0.005 vL=0.507 loss=+0.256 |g|=7.27 valid=0.80
+  [β=0.1 W=24] it56: r_task=-0.033 r_h=-3.059 KL=1.081 H=5.379 pg=-0.005 vL=0.489 loss=+0.249 |g|=2.74 valid=0.81
+  [β=0.1 W=24] it57: r_task=-0.030 r_h=-3.044 KL=1.086 H=5.393 pg=-0.005 vL=0.463 loss=+0.242 |g|=2.88 valid=0.80
+  [β=0.1 W=24] it58: r_task=-0.033 r_h=-2.986 KL=1.090 H=5.402 pg=-0.006 vL=0.529 loss=+0.262 |g|=5.78 valid=0.81
+  [β=0.1 W=24] it59: r_task=-0.030 r_h=-3.121 KL=1.084 H=5.397 pg=-0.005 vL=0.477 loss=+0.246 |g|=5.35 valid=0.79
+  [β=0.1 W=24] it60: r_task=-0.028 r_h=-3.116 KL=1.082 H=5.418 pg=-0.006 vL=0.432 loss=+0.232 |g|=4.53 valid=0.80
+  [β=0.1 W=24] it61: r_task=-0.032 r_h=-3.130 KL=1.079 H=5.402 pg=-0.006 vL=0.504 loss=+0.253 |g|=2.83 valid=0.81
+  [β=0.1 W=24] it62: r_task=-0.029 r_h=-3.076 KL=1.081 H=5.420 pg=-0.006 vL=0.421 loss=+0.228 |g|=1.38 valid=0.81
+  [β=0.1 W=24] it63: r_task=-0.029 r_h=-3.151 KL=1.080 H=5.399 pg=-0.006 vL=0.448 loss=+0.236 |g|=2.85 valid=0.81
+  [β=0.1 W=24] it64: r_task=-0.031 r_h=-3.070 KL=1.076 H=5.413 pg=-0.006 vL=0.476 loss=+0.244 |g|=3.05 valid=0.80
+  [β=0.1 W=24] it65: r_task=-0.028 r_h=-3.146 KL=1.077 H=5.382 pg=-0.005 vL=0.422 loss=+0.229 |g|=1.80 valid=0.79
+  [β=0.1 W=24] it66: r_task=-0.032 r_h=-3.196 KL=1.084 H=5.407 pg=-0.006 vL=0.475 loss=+0.245 |g|=2.67 valid=0.80
+  [β=0.1 W=24] it67: r_task=-0.034 r_h=-3.101 KL=1.087 H=5.400 pg=-0.006 vL=0.528 loss=+0.261 |g|=0.95 valid=0.79
+  [β=0.1 W=24] it68: r_task=-0.026 r_h=-3.084 KL=1.082 H=5.416 pg=-0.006 vL=0.386 loss=+0.218 |g|=1.69 valid=0.80
+  [β=0.1 W=24] it69: r_task=-0.029 r_h=-3.273 KL=1.090 H=5.450 pg=-0.006 vL=0.446 loss=+0.236 |g|=1.13 valid=0.81
+  [β=0.1 W=24] it70: r_task=-0.033 r_h=-3.168 KL=1.088 H=5.428 pg=-0.007 vL=0.492 loss=+0.249 |g|=4.89 valid=0.80
+  [β=0.1 W=24] it71: r_task=-0.029 r_h=-3.068 KL=1.085 H=5.444 pg=-0.006 vL=0.446 loss=+0.236 |g|=1.89 valid=0.80
+  [β=0.1 W=24] it72: r_task=-0.032 r_h=-3.188 KL=1.103 H=5.445 pg=-0.007 vL=0.488 loss=+0.249 |g|=1.50 valid=0.79
+  [β=0.1 W=24] it73: r_task=-0.029 r_h=-3.162 KL=1.083 H=5.397 pg=-0.005 vL=0.419 loss=+0.228 |g|=1.76 valid=0.80
+  [β=0.1 W=24] it74: r_task=-0.029 r_h=-3.036 KL=1.072 H=5.385 pg=-0.006 vL=0.442 loss=+0.234 |g|=1.66 valid=0.80
+  [ckpt] saved /spacer/checkpoints/k46_b0.1_postfix_10k/ckpt_b0.1_W24_it000075.pt
+  [β=0.1 W=24] it75: r_task=-0.029 r_h=-3.147 KL=1.090 H=5.395 pg=-0.006 vL=0.443 loss=+0.236 |g|=4.18 valid=0.81
+  [β=0.1 W=24] it76: r_task=-0.029 r_h=-3.223 KL=1.105 H=5.393 pg=-0.007 vL=0.423 loss=+0.230 |g|=1.82 valid=0.79
+  [β=0.1 W=24] it77: r_task=-0.028 r_h=-2.983 KL=1.088 H=5.395 pg=-0.006 vL=0.410 loss=+0.225 |g|=1.56 valid=0.79
+  [β=0.1 W=24] it78: r_task=-0.030 r_h=-3.072 KL=1.089 H=5.408 pg=-0.006 vL=0.448 loss=+0.237 |g|=2.80 valid=0.80
+  [β=0.1 W=24] it79: r_task=-0.028 r_h=-3.032 KL=1.072 H=5.408 pg=-0.006 vL=0.447 loss=+0.235 |g|=1.35 valid=0.80
+  [tokens] iter 79 top-5: [(1273, 2123), (1804, 1968), (1047, 1472), (1409, 1392), (1406, 1358)]
+  [ckpt] saved /spacer/checkpoints/k46_b0.1_postfix_10k/ckpt_b0.1_W24_it000080.pt
+params changed (mean|Δw|)=1.62e-02 | finite=True | 31362.3s (0.00 it/s)
+VERDICT: M5b OK — faithful loop (exact per-agent Eq.5, differentiable), stable, π_θ updates

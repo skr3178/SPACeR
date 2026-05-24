@@ -19,9 +19,15 @@ code. Captured here so the audit findings are searchable without diluting
 **Combined picture of what's still genuinely worth investigating** (most
 important first):
 
-1. **KL aggregation: mean vs sum across agents** (Audit #3 Interaction B)
-   — if the paper sums and we mean, our nominal β=0.10 is effectively
-   β=0.10/N ≈ β=6e-4 (off by ~100-160×); whole sweep was in wrong regime.
+1. ✅ **RESOLVED — KL aggregation matches reference HR-PPO.** Audit #3
+   Interaction B is closed. `KLDivLoss(reduction="batchmean")` in the
+   Cornelisse & Vinitsky reference (`reference_code/nocturne_lab/.../reg_ppo.py:59`)
+   = sum-over-vocab + mean-over-samples = exactly our convention. Our β
+   scale is on the right axis. **See Audit #3 follow-up note for details.**
+   (Side finding: the reference uses convex-combo loss `(1-β)·PPO + β·KL`
+   vs our additive `PPO + β·KL`; for β ≤ 0.10 the two are near-equivalent
+   so our past conclusions stand; for β=1.0 the mechanisms differ but the
+   "worst" verdict holds either way. Low-priority refactor.)
 2. **Rollout doesn't preserve 1s logged history** (Audit #2 Claim 1) —
    π_ref scores a partly π_θ-generated "history" context.
 3. **Non-controlled agents driven by token 0** (Audit #2 Claim 2) —
@@ -420,6 +426,56 @@ or PufferLib's HR-PPO KL term directly. **The single most important
 unresolved question** — could explain almost everything Test 22 didn't.
 Cheap to audit by reading `gpudrive/integrations/puffer/ppo.py`.
 
+#### Follow-up audit (resolved): reference HR-PPO from `nocturne_lab`
+
+`reference_code/nocturne_lab/algorithms/ppo/sb3/reg_ppo.py` (Cornelisse &
+Vinitsky 2024) is the HR-PPO implementation the SPACeR paper builds on.
+Two findings:
+
+**Finding 1 — KL aggregation: ✅ our convention matches.**
+Line 59:
+```python
+self.reg_loss = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
+```
+`KLDivLoss(reduction="batchmean")` = sum over the class/vocab dim,
+mean over the batch (sample) dim — **exactly** what our code does at
+[train_spacer.py:410](spacer/train_spacer.py#L410):
+`(lpth.exp() * (lpth - lprf)).sum(-1)[rv].mean()`. Audit #3 Interaction B's
+"are we off by ~N?" worry is **resolved: no, we are not**. Our β values
+are on the right scale.
+
+**Finding 2 — loss formulation differs (convex-combo vs additive):**
+Line 174:
+```python
+loss = (1 - reg_weight) * loss_ppo + reg_weight * loss_reg
+```
+**Reference uses a convex combination** with `reg_weight ∈ [0, 1]`:
+PPO@(1−β) + KL@β. We use an **additive** form: PPO@1.0 + β·KL.
+
+Translation of β values:
+
+| β | Paper PPO weight | Paper KL/PPO ratio | Ours PPO weight | Ours KL/PPO ratio |
+|---|---|---|---|---|
+| 0.01 | 0.99 | 0.0101 | 1.00 | 0.0100 |
+| 0.10 | 0.90 | 0.111 | 1.00 | 0.100 |
+| 0.50 | 0.50 | 1.00 | 1.00 | 0.500 |
+| 1.00 | **0.00 (pure KL)** | ∞ | 1.00 | 1.000 |
+
+For β ≤ 0.10 (Tests 20/21 b=0.01/0.10, Test 22): near-equivalent
+(<10% PPO-weight difference) → **our past conclusions stand unchanged.**
+
+For β = 1.00 (Test 21 b1.0, the worst run): the paper's β=1.00 = pure
+KL with no PPO — degenerate by construction. Ours = PPO@1.0 + KL@1.0 =
+also degenerate, from over-regularization. **Same empirical "worst" outcome,
+different mechanism.** Test 21's "β=1.0 ruled out" verdict still holds for
+both formulations — but the mechanisms are not identical.
+
+**Practical impact:** switching to convex-combo is a ~3-line refactor
+and is more paper-faithful, but for β ≤ 0.10 our experimental results
+would be near-identical either way. Worth doing if we ever plan
+high-β experiments; not high-leverage for retroactively reinterpreting
+Tests 20/21/22. Filed as low-priority follow-up.
+
 ### Verdict summary — Audit #3
 
 | Claim | Verdict | Impact |
@@ -440,18 +496,17 @@ What we now collectively know:
 
 | Category | Findings |
 |---|---|
-| **Real bugs that could affect Test 22's degenerate result** | (A2-1) no logged history in rollout; (A2-2) non-controlled agents on token 0; (A3-B) possible β-normalization mismatch |
-| **Lower-impact real code issues** | (A2-3) `alpha` not wired into GAE; (A2-4) `align_agents` dead alloc; (A2-5) dropout dual-forward |
+| **Real bugs that could affect Test 22's degenerate result** | (A2-1) no logged history in rollout; (A2-2) non-controlled agents on token 0 |
+| **Lower-impact real code issues** | (A2-3) `alpha` not wired into GAE; (A2-4) `align_agents` dead alloc; (A2-5) dropout dual-forward; (A3-B follow-up) additive vs convex-combo loss formulation (near-equivalent for β ≤ 0.10) |
 | **Unmeasured, cheap to instrument** | (A3-2) valid-coverage fraction; (A3-A) token distribution |
-| **Conclusively non-issues** | (A1-3) `gt_idx` re-tokenization "critical bug" — round-trip exact, α=0 anyway; (A3-4) obs_dim mismatch — auto-detected |
+| **Conclusively non-issues** | (A1-3) `gt_idx` re-tokenization "critical bug" — round-trip exact, α=0 anyway; (A3-4) obs_dim mismatch — auto-detected; **(A3-B) KL mean-vs-sum — matches reference HR-PPO via `reference_code/nocturne_lab/.../reg_ppo.py`** |
 | **Empirically refuted by our data** | (A1-4) higher β recommendation — Test 21 disproved β=1.00 |
 
 ### Recommended next moves (ordered by expected leverage / cost ratio)
 
-1. **Audit PufferLib's HR-PPO KL term** for mean vs sum convention. Zero
-   compute cost; potentially reframes the entire β picture. If we've
-   been silently in the wrong β regime, every β-sweep result needs
-   re-interpretation.
+1. ✅ **DONE — PufferLib + nocturne_lab HR-PPO audit.** KL aggregation
+   matches reference. Loss formulation differs (additive vs convex-combo)
+   but near-equivalent at our β values.
 2. **Fix Audit #2 Claim 2** (non-controlled agents → log-replay) — copy
    the pattern already correct in `eval_quick.py`'s `ref_rollout`. This
    is a focused ~15-line patch and the bug it fixes is plausibly large.
@@ -460,4 +515,5 @@ What we now collectively know:
 4. **Instrument** valid-coverage fraction (Audit #3 #2) and token-
    distribution (Audit #3 Interaction A) — one print each at iter 0.
 5. Defer: Audit #2 #3 (`alpha`), #4 (dead alloc), #5 (dropout). Cosmetic
-   or out-of-scope-for-Variant-4.
+   or out-of-scope-for-Variant-4. Also defer: convex-combo loss refactor
+   (paper-faithful but low-impact at our β values).
