@@ -1,0 +1,31 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+2026-05-24 05:24:04.196963: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-24 05:24:04.204340: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1779600244.212748    1674 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1779600244.215849    1674 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1779600244.223298    1674 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779600244.223310    1674 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779600244.223312    1674 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1779600244.223314    1674 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-05-24 05:24:04.225552: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Traceback (most recent call last):
+  File "/spacer/eval_quick.py", line 535, in <module>
+    main()
+  File "/spacer/eval_quick.py", line 421, in main
+    env, _ = build_env(n_scenes, n_worlds=a.worlds, split=a.split,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/spacer/train_spacer.py", line 78, in build_env
+    env = GPUDriveTorchEnv(config=ec, data_loader=loader,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpudrive/gpudrive/env/env_torch.py", line 59, in __init__
+    self.world_time_steps = torch.zeros(
+                            ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py", line 319, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: No CUDA GPUs are available

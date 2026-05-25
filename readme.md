@@ -4,6 +4,18 @@ Reproduction of SPACeR (KL-anchored PPO on top of a behavior-cloned policy) in
 GPUDrive / Waymo Open Motion. The goal is the paper's Figure A1 training
 dynamics and Table 1 evaluation columns.
 
+## Latest updates
+
+- The teacher works well but the student doesn't seem to be learning much. 
+- The reward signal needs further investigation. 
+- Student is off. 
+- Missing the 2Hz signal
+- Even after gradient accumulation, the loss updates are not good enough to cover the paper
+- Plateaues happen much earlier in our study compared to paper, even when using 10K samples with 200 new injections. 
+- Paper plateaus are at 1E7. 
+
+![A1 Grid](Figures/FigureA1_grid.png)
+
 ## Latest runs at a glance
 
 **Completed run:** K=46 rollout-accumulation, β=0.10, W=24, 80 iters, 10k-scene
