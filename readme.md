@@ -16,6 +16,7 @@ dynamics and Table 1 evaluation columns.
 
 ![A1 Grid](Figures/FigureA1_grid.png)
 
+![current_ref_vs_GT](viz_pi_ref.gif)
 ## Latest runs at a glance
 
 **Completed run:** K=46 rollout-accumulation, β=0.10, W=24, 80 iters, 10k-scene
